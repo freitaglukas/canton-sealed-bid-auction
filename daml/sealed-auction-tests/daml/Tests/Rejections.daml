@@ -1,0 +1,138 @@
+-- | Authorization and visibility rejections, matched by SubmitError kind.
+module Tests.Rejections where
+
+import DA.Assert ((===))
+import DA.Date (date, Month(..))
+import DA.Time (time)
+import Daml.Script
+
+import SealedAuction.Auction
+import Tests.Fixtures
+
+notFound : Either SubmitError a -> Script ()
+notFound r = case r of
+  Left (ContractNotFound _ _) -> pure ()
+  Left e -> abort ("expected ContractNotFound, got " <> show e)
+  Right _ -> abort "expected ContractNotFound but submission succeeded"
+
+authError : Either SubmitError a -> Script ()
+authError r = case r of
+  Left (AuthorizationError _) -> pure ()
+  Left e -> abort ("expected AuthorizationError, got " <> show e)
+  Right _ -> abort "expected AuthorizationError but submission succeeded"
+
+disclosed : (Template t, HasEnsure t) => Party -> ContractId t -> Script Disclosure
+disclosed p cid = do
+  d <- queryDisclosure p cid
+  case d of
+    Some x -> pure x
+    None -> abort "no disclosure available"
+
+test_bidAfterCloseRejected : Script ()
+test_bidAfterCloseRejected = script do
+  w <- setupWorld
+  (auction, invs) <- openAuction w "A" "Painting"
+  let invB = invOf w.bob invs
+  ba <- placeBid w.alice (invOf w.alice invs) 100.0
+  _ <- closeAuction w auction [ba] [invB, invOf w.carol invs] -- bob's invitation is consumed by Expire
+  -- Invitation is gone: this bid cannot target it. (Close consumed it.)
+  r <- trySubmit w.bob $ exerciseCmd invB PlaceBid with amount = 10.0
+  notFound r
+  isActive w.bob invB >>= (=== False)
+
+test_bidAfterCloseWhileActiveRejected : Script ()
+test_bidAfterCloseWhileActiveRejected = script do
+  w <- setupWorld
+  (auction, invs) <- openAuction w "A" "Painting"
+  let invB = invOf w.bob invs
+  ba <- placeBid w.alice (invOf w.alice invs) 100.0
+  bc <- placeBid w.carol (invOf w.carol invs) 100.0
+  _ <- closeAuction w auction [ba, bc] [invB]
+  notFound =<< trySubmit w.bob (exerciseCmd invB PlaceBid with amount = 10.0)
+
+test_secondBidRejected : Script ()
+test_secondBidRejected = script do
+  w <- setupWorld
+  (_, invs) <- openAuction w "A" "Painting"
+  let invA = invOf w.alice invs
+  b <- placeBid w.alice invA 100.0
+  notFound =<< trySubmit w.alice (exerciseCmd invA PlaceBid with amount = 200.0)
+  isActive w.alice b >>= (=== True)
+  bids <- query @Bid w.alice
+  length bids === 1
+
+test_changeOthersBidRejected : Script ()
+test_changeOthersBidRejected = script do
+  w <- setupWorld
+  (_, invs) <- openAuction w "A" "Painting"
+  ba <- placeBid w.alice (invOf w.alice invs) 100.0
+  notFound =<< trySubmit w.bob (archiveCmd ba)
+  notFound =<< trySubmit w.bob (exerciseCmd ba Bid_Conclude with won = True)
+  d <- disclosed w.auctioneer ba
+  authError =<< trySubmit (actAs w.bob <> disclose d) (archiveCmd ba)
+  authError =<< trySubmit (actAs w.bob <> disclose d) (exerciseCmd ba Bid_Conclude with won = True)
+  isActive w.alice ba >>= (=== True)
+
+test_forgeBidRejected : Script ()
+test_forgeBidRejected = script do
+  w <- setupWorld
+  (_, invs) <- openAuction w "A" "Painting"
+  let invA = invOf w.alice invs
+  authError =<< trySubmit w.bob (createCmd Bid with
+    auctioneer = w.auctioneer; bidder = w.alice; invitationCid = invA
+    auctionId = "A"; item = "Painting"; amount = 1000.0; submittedAt = time0)
+  bids <- query @Bid w.auctioneer
+  length bids === 0
+  isActive w.alice invA >>= (=== True)
+
+time0 : Time
+time0 = time (date 2026 Nov 21) 12 0 0
+
+test_nonAuctioneerCloseRejected : Script ()
+test_nonAuctioneerCloseRejected = script do
+  w <- setupWorld
+  (auction, invs) <- openAuction w "A" "Painting"
+  let cmd = exerciseCmd auction Auction_Close with bids = []; openInvitations = map snd invs
+  notFound =<< trySubmit w.bob cmd
+  d <- disclosed w.auctioneer auction
+  authError =<< trySubmit (actAs w.bob <> disclose d) cmd
+  isActive w.auctioneer auction >>= (=== True)
+  r <- tryClose w auction [] (map snd invs)
+  case r of
+    Right _ -> pure ()
+    Left e -> abort ("auctioneer close failed: " <> show e)
+
+test_outsiderBidRejected : Script ()
+test_outsiderBidRejected = script do
+  w <- setupWorld
+  (_, invs) <- openAuction w "A" "Painting"
+  let invA = invOf w.alice invs
+      cmd = exerciseCmd invA PlaceBid with amount = 50.0
+  notFound =<< trySubmit w.dave cmd
+  d <- disclosed w.auctioneer invA
+  authError =<< trySubmit (actAs w.dave <> disclose d) cmd
+  authError =<< trySubmit w.dave (createCmd Bid with
+    auctioneer = w.auctioneer; bidder = w.dave; invitationCid = invA
+    auctionId = "A"; item = "Painting"; amount = 50.0; submittedAt = time0)
+  isActive w.alice invA >>= (=== True)
+
+test_outsiderCannotUseAuctioneerRole : Script ()
+test_outsiderCannotUseAuctioneerRole = script do
+  w <- setupWorld
+  let cmd = exerciseCmd w.role CreateAuction with
+        auctionId = "X"; item = "Vase"; invitees = [w.alice, w.bob, w.carol]
+  notFound =<< trySubmit w.dave cmd
+  d <- disclosed w.auctioneer w.role
+  authError =<< trySubmit (actAs w.dave <> disclose d) cmd
+  isActive w.auctioneer w.role >>= (=== True)
+  auctions <- query @Auction w.auctioneer
+  length auctions === 0
+
+test_auctioneerCannotForgeOutcome : Script ()
+test_auctioneerCannotForgeOutcome = script do
+  w <- setupWorld
+  authError =<< trySubmit w.auctioneer (createCmd AuctionOutcome with
+    auctioneer = w.auctioneer; bidder = w.alice; auctionId = "A"; item = "Painting"
+    bidAmount = 1.0; result = Won with amountOwed = 1.0)
+  o <- query @AuctionOutcome w.alice
+  length o === 0
