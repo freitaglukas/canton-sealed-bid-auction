@@ -28,6 +28,7 @@ export function mainPackageId(darPath: string): string {
 
 /** Upload (with vetting) to every participant in the topology, then verify on each one. */
 export async function deploy(darPath: string, topology: Topology): Promise<DeployRow[]> {
+  if (!Object.keys(topology.participants).length) throw new Error('topology has no participants')
   const packageId = mainPackageId(darPath)
   const bytes = readFileSync(darPath)
   const rows: DeployRow[] = []

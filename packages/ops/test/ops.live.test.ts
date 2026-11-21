@@ -37,6 +37,10 @@ describe.skipIf(!live)('live ops', () => {
   const read = (f: string) => JSON.parse(readFileSync(join(outDir, f), 'utf8'))
   const base = (id: string) => topo.participants[topo.users.find((u) => u.id === id)!.participant]
 
+  it('deploy rejects an empty participants map', async () => {
+    await expect(deploy(DAR ?? '/nonexistent.dar', { participants: {}, users: [] })).rejects.toThrow(/no participants/)
+  })
+
   describe.skipIf(!DAR)('with TEST_DAR', () => {
     beforeAll(async () => {
       // provision requires the package to be deployed first; the probe DAR stands in for the real one
@@ -71,7 +75,8 @@ describe.skipIf(!live)('live ops', () => {
         expect(keys).toEqual(want.sort())
       }
       const creds = read('credentials.json')
-      expect(Object.keys(creds).sort()).toEqual(topo.users.filter((u) => u.role !== 'auditor').map((u) => u.id).sort())
+      expect(Object.keys(creds).sort()).toEqual(topo.users.map((u) => u.id).sort())
+      for (const pw of Object.values(creds)) expect(typeof pw).toBe('string')
     }, 120_000)
 
     it('provision is idempotent and repairs partial and stale state', async () => {
@@ -93,9 +98,9 @@ describe.skipIf(!live)('live ops', () => {
       )
       expect(read('credentials.json')[victim]).toEqual(first.creds[victim])
 
-      // stale rights: an extra right on bob is revoked
+      // stale rights: extra party and admin rights on bob are revoked
       const bob = `${s}-bob`
-      await grantRights(base(bob), bob, [{ kind: 'CanReadAs', party: first.parties[`${s}-alice`] }])
+      await grantRights(base(bob), bob, [{ kind: 'CanReadAs', party: first.parties[`${s}-alice`] }, { kind: 'ParticipantAdmin' }])
       await provision(topo, { outDir })
       expect((await listRights(base(bob), bob)).map(rightKey).sort()).toEqual(
         [`CanActAs:${first.parties[bob]}`, `CanReadAs:${first.parties[bob]}`].sort(),
@@ -110,6 +115,11 @@ describe.skipIf(!live)('live ops', () => {
       writeFileSync(join(outDir, 'credentials.json'), 'not json')
       await provision(topo, { outDir })
       expect(Object.keys(read('credentials.json')).sort()).toEqual(Object.keys(first.creds).sort())
+
+      // legacy {password} shape is migrated to plain strings, keeping the password
+      writeFileSync(join(outDir, 'credentials.json'), JSON.stringify({ [`${s}-bob`]: { password: 'legacy-pw' } }))
+      await provision(topo, { outDir })
+      expect(read('credentials.json')[`${s}-bob`]).toBe('legacy-pw')
     }, 180_000)
 
     it('provision skips the AuctioneerRole step when sealed-auction is not vetted', async () => {

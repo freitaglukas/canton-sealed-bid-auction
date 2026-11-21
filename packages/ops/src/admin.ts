@@ -3,24 +3,19 @@ import { mintToken } from '@sa/ledger-client'
 
 export const ADMIN = 'ledger-api-user'
 
-export type Right =
-  | { kind: 'CanActAs'; party: string }
-  | { kind: 'CanReadAs'; party: string }
-  | { kind: 'CanReadAsAnyParty' }
+/** Any right kind; `party` is set for the party-scoped kinds (CanActAs, CanReadAs, CanExecuteAs). */
+export type Right = { kind: string; party?: string }
 
-export const rightKey = (r: Right): string => (r.kind === 'CanReadAsAnyParty' ? r.kind : `${r.kind}:${r.party}`)
+export const rightKey = (r: Right): string => (r.party ? `${r.kind}:${r.party}` : r.kind)
 
-const toWire = (r: Right) =>
-  r.kind === 'CanReadAsAnyParty'
-    ? { kind: { CanReadAsAnyParty: { value: {} } } }
-    : { kind: { [r.kind]: { value: { party: r.party } } } }
+const toWire = (r: Right) => ({ kind: { [r.kind]: { value: r.party ? { party: r.party } : {} } } })
 
 function fromWire(w: any): Right | undefined {
   const k = w?.kind ?? {}
-  if (k.CanActAs) return { kind: 'CanActAs', party: k.CanActAs.value.party }
-  if (k.CanReadAs) return { kind: 'CanReadAs', party: k.CanReadAs.value.party }
-  if (k.CanReadAsAnyParty) return { kind: 'CanReadAsAnyParty' }
-  return undefined // ParticipantAdmin etc: not ours to manage
+  const kind = Object.keys(k)[0]
+  if (!kind) return undefined
+  const party = k[kind]?.value?.party
+  return typeof party === 'string' ? { kind, party } : { kind }
 }
 
 export interface Res {
@@ -62,7 +57,7 @@ async function ok(base: string, path: string, init: Parameters<typeof call>[2] =
 
 // ---- packages ----
 
-export const uploadDar = (base: string, dar: Uint8Array) => ok(base, '/v2/packages?vetAllPackages=true', { bytes: dar })
+export const uploadDar = (base: string, dar: Uint8Array) => ok(base, '/v2/dars?vetAllPackages=true', { bytes: dar })
 
 /** Raw `packageStatus` literal, or `null` if the participant does not know the package. */
 export async function packageStatus(base: string, packageId: string): Promise<string | null> {
