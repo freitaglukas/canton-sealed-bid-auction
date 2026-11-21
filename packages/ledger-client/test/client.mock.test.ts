@@ -79,6 +79,32 @@ describe('client request/response shapes', () => {
     expect(reqs.filter((r) => r.url.startsWith('/v2/updates'))).toHaveLength(3)
   })
 
+  it('sends disclosedContracts with createdEventBlob', async () => {
+    reqs.length = 0
+    handler = () => ({ json: { transaction: { updateId: 'u', offset: 1, events: [ex('c1', 'Close', 'ok')] } } })
+    const c = createLedgerClient(base, 'bob', 't')
+    await c.exercise('#p:M:T', 'c1', 'Close', {}, ['p'], { disclosed: [{ templateId: 'pk:M:T', contractId: 'c1', createdEventBlob: 'BLOB' }] })
+    expect(reqs[0].body.commands.disclosedContracts).toEqual([{ templateId: 'pk:M:T', contractId: 'c1', createdEventBlob: 'BLOB' }])
+    reqs.length = 0
+    await c.exercise('#p:M:T', 'c1', 'Close', {}, ['p'])
+    expect(reqs[0].body.commands.disclosedContracts).toBeUndefined()
+  })
+
+  it('INACTIVE_CONTRACTS is not retryable', async () => {
+    handler = () => ({ status: 409, json: { code: 'INACTIVE_CONTRACTS', cause: 'archived', context: {}, errorCategory: 9 } })
+    const e = await createLedgerClient(base, 'a', 't').create('#p:M:T', {}, ['p']).catch((x) => x)
+    expect(e.retryable).toBe(false)
+  })
+
+  it('re-mints the token after a 401 and retries once', async () => {
+    reqs.length = 0
+    let n = 0
+    handler = (r) => (r.url.includes('ledger-end') && n++ === 0 ? { status: 401, json: { code: 'UNAUTHENTICATED', cause: 'expired', context: {} } } : { json: { offset: 7 } })
+    const c = createLedgerClient(base, 'a')
+    expect(await c.ledgerEnd()).toBe(7)
+    expect(reqs).toHaveLength(2)
+  })
+
   it('maps HTTP errors to LedgerError', async () => {
     handler = () => ({ status: 409, json: { code: 'LOCAL_VERDICT_LOCKED_CONTRACTS', cause: 'locked', context: {}, errorCategory: 2 } })
     const c = createLedgerClient(base, 'alice', 't')

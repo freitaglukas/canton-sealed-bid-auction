@@ -15,7 +15,7 @@ export class LedgerError extends Error {
 }
 
 const SA_RE = /SA_[A-Z_]+/
-const RETRY_CODE_RE = /LOCKED|INACTIVE_CONTRACTS|CONTENTION/
+const RETRY_CODE_RE = /LOCKED|CONTENTION/
 // Canton ErrorCategory id 2 = ContentionOnSharedResources (best-effort; code and retryInfo are the primary signals).
 const CONTENTION_CATEGORY = 2
 

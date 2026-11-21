@@ -74,14 +74,27 @@ function toTransaction(tx: any): LedgerTransaction {
 }
 
 export function createLedgerClient(baseUrl: string, userId: string, token?: string): LedgerClient {
-  let tokenPromise: Promise<string> | undefined
-  const getToken = () => (token ? Promise.resolve(token) : (tokenPromise ??= mintToken(userId)))
+  // Provided tokens are used as-is; minted ones are refreshed within 60s of expiry or after a 401.
+  const TTL_SEC = 3600
+  let minted: { token: string; expMs: number } | undefined
+  const getToken = async (force = false): Promise<string> => {
+    if (token) return token
+    if (force || !minted || minted.expMs - Date.now() < 60_000) {
+      const t = await mintToken(userId, { ttlSec: TTL_SEC })
+      minted = { token: t, expMs: Date.now() + TTL_SEC * 1000 }
+    }
+    return minted.token
+  }
 
   const http = createClient<paths>({
     baseUrl,
     fetch: async (req: Request) => {
+      const retry = req.clone()
       req.headers.set('authorization', `Bearer ${await getToken()}`)
-      return fetch(req)
+      const res = await fetch(req)
+      if (res.status !== 401 || token) return res
+      retry.headers.set('authorization', `Bearer ${await getToken(true)}`)
+      return fetch(retry)
     },
   })
 

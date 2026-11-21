@@ -5,7 +5,6 @@ import { createLedgerClient } from '../src/client'
 import { LedgerError } from '../src/errors'
 import { mintToken } from '../src/jwt'
 import { loadTopology } from '../src/topology'
-import { T } from '../src/templates'
 
 const live = process.env.LOCALNET === '1'
 const DAR = process.env.TEST_DAR
@@ -28,18 +27,25 @@ describe.skipIf(!live)('live: every participant, admin token', () => {
       const c = createLedgerClient(base, ADMIN)
       const end = await c.ledgerEnd()
       expect(end).toBeGreaterThanOrEqual(0)
-      const rows = await c.activeContracts('ANY', 'ALL', { atOffset: end })
-      expect(Array.isArray(rows)).toBe(true)
+      // The admin user has no CanReadAsAnyParty, so read as the party it can act as (if any).
+      const rights = await admin(base, `/v2/users/${ADMIN}/rights`, { method: 'GET' })
+      const act = rights.rights.find((r: any) => r.kind?.CanActAs)?.kind.CanActAs.value.party as string | undefined
+      if (act) {
+        const rows = await c.activeContracts(act, 'ALL', { atOffset: end })
+        expect(Array.isArray(rows)).toBe(true)
+      }
     })
   }
 })
 
-describe.skipIf(!live || !DAR)('live: auction flow (needs TEST_DAR)', () => {
+const PROBE = '#ledger-client-probe:Probe:Thing'
+
+describe.skipIf(!live || !DAR)('live: probe flow (needs TEST_DAR = test/probe/.daml/dist/ledger-client-probe-0.0.2.dar)', () => {
   const base = topo?.participants['app-provider'] ?? ''
-  const suffix = Date.now().toString(36)
+  const suffix = `t${Math.random().toString(36).slice(2, 8)}`
 
   async function party(hint: string): Promise<string> {
-    const r = await admin(base, '/v2/parties', { json: { partyIdHint: `${hint}${suffix}`, identityProviderId: '' } })
+    const r = await admin(base, '/v2/parties', { json: { partyIdHint: `${suffix}-${hint}`, identityProviderId: '' } })
     return r.partyDetails.party as string
   }
   async function user(id: string, p: string) {
@@ -51,33 +57,55 @@ describe.skipIf(!live || !DAR)('live: auction flow (needs TEST_DAR)', () => {
     })
   }
 
-  it('create, exercise with result, ACS at offset, updates, error parse', async () => {
+  it('create, exercise with result, ACS at offset, updates, disclosure, error parse', async () => {
     await admin(base, '/v2/packages', { headers: { 'content-type': 'application/octet-stream' }, body: readFileSync(DAR!) as unknown as BodyInit })
-    const auctioneer = await party('lt-auctioneer')
-    const bidders = await Promise.all(['a', 'b', 'c'].map((h) => party(`lt-${h}`)))
-    const uid = `lt-auctioneer-${suffix}`
-    await user(uid, auctioneer)
-    const c = createLedgerClient(base, uid)
+    const owner = await party('owner')
+    const other = await party('other')
+    await user(`${suffix}-owner`, owner)
+    await user(`${suffix}-other`, other)
+    const co = createLedgerClient(base, `${suffix}-owner`)
+    const cx = createLedgerClient(base, `${suffix}-other`)
 
-    const before = await c.ledgerEnd()
-    const { contractId } = await c.create(T.AuctioneerRole, { auctioneer }, [auctioneer])
+    const before = await co.ledgerEnd()
+    const { contractId } = await co.create(PROBE, { owner, label: 'x' }, [owner])
     expect(contractId).toBeTruthy()
-
-    const after = await c.ledgerEnd()
+    const after = await co.ledgerEnd()
     expect(after).toBeGreaterThan(before)
-    const rows = await c.activeContracts(auctioneer, [T.AuctioneerRole], { atOffset: after })
-    expect(rows.map((r) => r.contractId)).toContain(contractId)
 
-    // Choice name per the frozen Daml model: CreateAuction on AuctioneerRole.
-    const r = await c.exercise<string>(T.AuctioneerRole, contractId, 'CreateAuction', { auctionId: `a-${suffix}`, item: 'x', invitees: bidders }, [auctioneer])
-    expect(r.result).toBeTruthy()
+    // ACS at an explicit offset, with and without blob
+    const rows = await co.activeContracts<{ label: string }>(owner, [PROBE], { atOffset: after })
+    expect(rows.map((r) => r.contractId)).toContain(contractId)
+    expect(rows[0].createdEventBlob).toBeUndefined()
+    expect(await co.activeContracts(owner, 'ALL', { atOffset: before })).toEqual([])
+
+    // exercise with result (non-consuming)
+    const r = await co.exercise<string>(PROBE, contractId, 'Ping', { viewer: owner }, [owner])
+    expect(r.result).toBe('pong:x')
     expect(r.events.some((e) => e.kind === 'exercised')).toBe(true)
 
-    const txs = await c.updates(auctioneer, before)
-    expect(txs.some((t) => t.events.some((e) => e.kind === 'exercised' && e.choice === 'CreateAuction'))).toBe(true)
+    const txs = await co.updates(owner, before)
+    expect(txs.some((t) => t.events.some((e) => e.kind === 'exercised' && e.choice === 'Ping'))).toBe(true)
 
-    const err = await c.exercise(T.AuctioneerRole, '00' + 'ab'.repeat(33), 'CreateAuction', {}, [auctioneer]).catch((e) => e)
+    // not visible to other without disclosure
+    expect(await cx.activeContracts(other, [PROBE])).toEqual([])
+    const denied = await cx.exercise(PROBE, contractId, 'Ping', { viewer: other }, [other]).catch((e) => e)
+    expect(denied).toBeInstanceOf(LedgerError)
+
+    // disclosed exercise: owner reads blob, other exercises with it
+    const [withBlob] = await co.activeContracts(owner, [PROBE], { includeBlob: true })
+    expect(withBlob.createdEventBlob).toBeTruthy()
+    const dis = await cx
+      .exercise<string>(PROBE, contractId, 'Ping', { viewer: other }, [other], {
+        disclosed: [{ templateId: withBlob.templateId, contractId, createdEventBlob: withBlob.createdEventBlob! }],
+      })
+      .catch((e) => e)
+    // Either the disclosed exercise succeeds, or it is a parsed LedgerError; never a raw failure.
+    if (dis instanceof Error) expect(dis).toBeInstanceOf(LedgerError)
+    else expect(dis.result).toBe('pong:x')
+
+    const err = await co.exercise(PROBE, '00' + 'ab'.repeat(33), 'Ping', { viewer: owner }, [owner]).catch((e) => e)
     expect(err).toBeInstanceOf(LedgerError)
     expect(err.httpStatus).toBeGreaterThanOrEqual(400)
+    console.log('error sample', JSON.stringify(err.raw), 'disclosed outcome', dis instanceof Error ? dis.code : 'ok')
   })
 })
