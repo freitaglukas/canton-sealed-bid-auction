@@ -1,15 +1,20 @@
 // Shared helpers for live probes. Node >= 20. HS256 secret "unsafe".
 import { createHmac, randomBytes } from 'node:crypto';
+import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 
-export const NODES = { provider: 'http://localhost:3975', user: 'http://localhost:2975', sv: 'http://localhost:4975' };
-export const PKG_ID = '4fe313ea75c585825704535c75a84d299b6c24aaf17282dbe73f9180277a19a4';
+// Run order: 03 creates ../.state.json, which 04-09 need. Env overrides: PROVIDER_URL USER_URL SV_URL LEDGER_SECRET DPM.
+export const NODES = { provider: process.env.PROVIDER_URL ?? 'http://localhost:3975', user: process.env.USER_URL ?? 'http://localhost:2975', sv: process.env.SV_URL ?? 'http://localhost:4975' };
+const fallbackDpm = `${process.env.HOME}/.dpm/bin/dpm`;
+export const DPM = process.env.DPM ?? (() => {
+  try { return execSync('command -v dpm', { shell: '/bin/sh' }).toString().trim() || fallbackDpm; } catch { return fallbackDpm; }
+})();
 export const TPL = '#sa-probe:Probe:P';
 const b64 = (x) => Buffer.from(x).toString('base64url');
 export const jwt = (sub) => {
   const h = b64(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const p = b64(JSON.stringify({ sub, aud: 'https://canton.network.global' }));
-  return `${h}.${p}.${createHmac('sha256', 'unsafe').update(`${h}.${p}`).digest('base64url')}`;
+  return `${h}.${p}.${createHmac('sha256', process.env.LEDGER_SECRET ?? 'unsafe').update(`${h}.${p}`).digest('base64url')}`;
 };
 export const rand = () => randomBytes(3).toString('hex');
 

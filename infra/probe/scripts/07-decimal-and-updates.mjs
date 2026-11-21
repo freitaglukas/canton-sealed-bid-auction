@@ -1,11 +1,11 @@
 // Decimal JSON rendering (separate sa-probe-dec package) + /v2/updates cap behaviour.
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { call, jwt, NODES, ADMIN, submit, createdCid, loadState, ledgerEnd, rand } from './lib.mjs';
+import { call, jwt, NODES, ADMIN, DPM, submit, createdCid, loadState, ledgerEnd, rand } from './lib.mjs';
 
 const S = loadState();
 const dir = new URL('../dec/', import.meta.url).pathname;
-execSync('~/.dpm/bin/dpm build', { cwd: dir, stdio: 'ignore', shell: '/bin/bash' });
+execSync(`"${DPM}" build`, { cwd: dir, stdio: 'ignore' });
 const dar = readFileSync(dir + '.daml/dist/sa-probe-dec-0.1.0.dar');
 const up = await fetch(NODES.provider + '/v2/dars?vetAllPackages=true', { method: 'POST', headers: { Authorization: `Bearer ${jwt(ADMIN)}`, 'Content-Type': 'application/octet-stream' }, body: dar });
 console.log('upload dec', up.status, await up.text());
