@@ -1,0 +1,13 @@
+{
+  "name": "@sa/ledger-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "gen": "openapi-typescript openapi/openapi.yaml -o src/generated/openapi.d.ts",
+    "test": "vitest run"
+  },
+  "dependencies": { "jose": "^5.9.6", "openapi-fetch": "^0.13.3" },
+  "devDependencies": { "openapi-typescript": "^7.4.4" }
+}

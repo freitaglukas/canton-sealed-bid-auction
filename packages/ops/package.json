@@ -1,0 +1,13 @@
+{
+  "name": "@sa/ops",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "deploy": "tsx src/deploy-dar.ts",
+    "provision": "tsx src/provision.ts",
+    "test": "vitest run"
+  },
+  "dependencies": { "@sa/ledger-client": "*" }
+}

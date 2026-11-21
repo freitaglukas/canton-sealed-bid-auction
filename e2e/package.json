@@ -1,0 +1,14 @@
+{
+  "name": "@sa/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "echo 'e2e runs via make e2e (needs LOCALNET=1)'",
+    "e2e": "vitest run --config vitest.config.ts",
+    "demo": "tsx src/demo.ts",
+    "ui": "playwright test -c playwright/playwright.config.ts"
+  },
+  "dependencies": { "@sa/ledger-client": "*", "@sa/backend": "*", "@sa/ops": "*" },
+  "devDependencies": { "@playwright/test": "^1.49.1" }
+}

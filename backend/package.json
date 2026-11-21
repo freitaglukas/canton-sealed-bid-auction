@@ -1,0 +1,9 @@
+{
+  "name": "@sa/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts", "./contract": "./src/contract.ts" },
+  "scripts": { "start": "tsx src/main.ts", "test": "vitest run" },
+  "dependencies": { "@sa/ledger-client": "*", "fastify": "^5.1.0", "@fastify/cookie": "^11.0.1" }
+}

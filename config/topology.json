@@ -1,0 +1,17 @@
+{
+  "participants": {
+    "app-provider": "http://localhost:3975",
+    "app-user": "http://localhost:2975",
+    "sv": "http://localhost:4975"
+  },
+  "users": [
+    { "id": "auctioneer", "participant": "app-provider", "role": "auctioneer" },
+    { "id": "alice", "participant": "app-user", "role": "bidder" },
+    { "id": "bob", "participant": "app-user", "role": "bidder" },
+    { "id": "carol", "participant": "app-user", "role": "bidder" },
+    { "id": "dave", "participant": "app-user", "role": "outsider" },
+    { "id": "auditor-app-user", "participant": "app-user", "role": "auditor" },
+    { "id": "auditor-app-provider", "participant": "app-provider", "role": "auditor" },
+    { "id": "auditor-sv", "participant": "sv", "role": "auditor" }
+  ]
+}
