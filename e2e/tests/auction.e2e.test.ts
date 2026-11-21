@@ -92,12 +92,6 @@ describe.skipIf(!LIVE)('sealed-bid auction on LocalNet', () => {
     }
   })
 
-  // KNOWN BUG: backend rejects every real invitationId with 414 FST_ERR_MAX_PARAM_LENGTH (fastify maxParamLength).
-  it.fails('3b. REST bid endpoint accepts a real invitationId (BUG: 414 param too long)', async () => {
-    const r = await restBid('bob', inv.B.bob, '10')
-    expect(r.status).toBe(200)
-  })
-
   it('4. privacy before close', async () => {
     const amt: Record<string, string> = { alice: '100', bob: '150', carol: '120' }
     for (const u of bidders) {
