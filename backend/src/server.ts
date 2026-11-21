@@ -20,7 +20,7 @@ export interface ServerDeps {
 }
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
-  const app = Fastify({ logger: deps.logger ?? false })
+  const app = Fastify({ logger: deps.logger ?? false, maxParamLength: 1024 }) // Canton contract ids are ~170 chars; default limit is 100
   await app.register(cookie, { secret: newSecret() })
   const svc = createAuctionService(deps)
 
