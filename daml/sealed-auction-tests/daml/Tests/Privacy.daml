@@ -1,0 +1,118 @@
+-- | Privacy: who can see what, always paired with a positive control.
+module Tests.Privacy where
+
+import DA.Assert ((===))
+import DA.Foldable (forA_)
+import Daml.Script
+
+import SealedAuction.Auction
+import Tests.Fixtures
+
+-- | Everything a party can see, as counts per template.
+countsFor : Party -> Script [Int]
+countsFor p = do
+  a <- query @AuctioneerRole p
+  b <- query @Auction p
+  c <- query @AuctionInvitation p
+  d <- query @Bid p
+  e <- query @AuctionOutcome p
+  f <- query @NoBidNotice p
+  g <- query @AuctionResult p
+  pure [length a, length b, length c, length d, length e, length f, length g]
+
+test_biddersSeeOnlyOwnBid : Script ()
+test_biddersSeeOnlyOwnBid = script do
+  w <- setupWorld
+  (_, invs) <- openAuction w "A" "Painting"
+  ba <- placeBid w.alice (invOf w.alice invs) 100.0
+  bb <- placeBid w.bob (invOf w.bob invs) 150.0
+  bc <- placeBid w.carol (invOf w.carol invs) 120.0
+  let own = [(w.alice, ba), (w.bob, bb), (w.carol, bc)]
+  forA_ own \(p, mine) -> do
+    forA_ own \(q, c) -> do
+      seen <- queryContractId p c
+      ownerSees <- queryContractId w.auctioneer c
+      assertMsg "auctioneer must see every bid" (isSome' ownerSees)
+      if p == q
+        then assertMsg "bidder must see own bid" (isSome' seen)
+        else assertMsg ("bid leaked to " <> show p) (not (isSome' seen))
+    bids <- query @Bid p
+    map fst bids === [mine]
+  all' <- query @Bid w.auctioneer
+  length all' === 3
+
+isSome' : Optional a -> Bool
+isSome' (Some _) = True
+isSome' None = False
+
+test_biddersSeeOnlyOwnInvitation : Script ()
+test_biddersSeeOnlyOwnInvitation = script do
+  w <- setupWorld
+  (_, invs) <- openAuction w "A" "Painting"
+  forA_ [w.alice, w.bob, w.carol] \p -> do
+    forA_ invs \(q, c) -> do
+      seen <- queryContractId p c
+      if p == q then assertMsg "own invitation visible" (isSome' seen)
+        else assertMsg ("invitation leaked to " <> show p) (not (isSome' seen))
+    mine <- query @AuctionInvitation p
+    map fst mine === [invOf p invs]
+  forA_ invs \(_, c) -> do
+    s <- queryContractId w.auctioneer c
+    assertMsg "auctioneer sees invitation" (isSome' s)
+
+test_biddersCannotSeeAuctionOrResult : Script ()
+test_biddersCannotSeeAuctionOrResult = script do
+  w <- setupWorld
+  (auction, invs) <- openAuction w "A" "Painting"
+  let check = forA_ [w.alice, w.bob, w.carol, w.dave] \p -> do
+        a <- query @Auction p
+        r <- query @AuctionResult p
+        length a === 0
+        length r === 0
+        s <- queryContractId p auction
+        assertMsg "auction leaked" (not (isSome' s))
+  check
+  aOwn <- query @Auction w.auctioneer
+  length aOwn === 1
+  ba <- placeBid w.alice (invOf w.alice invs) 100.0
+  bb <- placeBid w.bob (invOf w.bob invs) 150.0
+  _ <- closeAuction w auction [ba, bb] [invOf w.carol invs]
+  check
+  rOwn <- query @AuctionResult w.auctioneer
+  length rOwn === 1
+
+test_ownBidVisibleAfterClose : Script ()
+test_ownBidVisibleAfterClose = script do
+  w <- setupWorld
+  (auction, invs) <- openAuction w "A" "Painting"
+  ba <- placeBid w.alice (invOf w.alice invs) 100.0
+  bb <- placeBid w.bob (invOf w.bob invs) 150.0
+  bc <- placeBid w.carol (invOf w.carol invs) 120.0
+  _ <- closeAuction w auction [ba, bb, bc] []
+  forA_ [(w.alice, 100.0), (w.bob, 150.0), (w.carol, 120.0)] \(p, amt) -> do
+    o <- single "outcome" =<< outcomesFor p "A"
+    o.bidAmount === amt
+    o.bidder === p
+    case (p == w.bob, o.result) of
+      (True, Won owed) -> owed === 150.0
+      (False, Lost) -> pure ()
+      _ -> abort ("unexpected result for " <> show p)
+  forA_ [w.alice, w.bob, w.carol] \p -> do
+    bids <- query @Bid p
+    length bids === 0
+
+test_outsiderSeesNothing : Script ()
+test_outsiderSeesNothing = script do
+  w <- setupWorld
+  let zero = replicate 7 0
+  (auction, invs) <- openAuction w "A" "Painting"
+  countsFor w.dave >>= (=== zero)
+  ba <- placeBid w.alice (invOf w.alice invs) 100.0
+  bb <- placeBid w.bob (invOf w.bob invs) 150.0
+  countsFor w.dave >>= (=== zero)
+  mine <- countsFor w.auctioneer
+  assertMsg "positive control: auctioneer sees things" (sum mine > 0)
+  _ <- closeAuction w auction [ba, bb] [invOf w.carol invs]
+  countsFor w.dave >>= (=== zero)
+  mine2 <- countsFor w.auctioneer
+  assertMsg "positive control after close" (sum mine2 > 0)
