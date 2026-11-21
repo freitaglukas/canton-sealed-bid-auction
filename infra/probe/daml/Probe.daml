@@ -1,0 +1,29 @@
+module Probe where
+
+import DA.Fail
+import DA.TextMap qualified as TextMap
+
+template P
+  with
+    owner : Party
+    obs : [Party]
+  where
+    signatory owner
+    observer obs
+
+    choice P_Consume : () with
+      controller owner
+      do pure ()
+
+    nonconsuming choice P_Fail : () with
+      controller owner
+      do assertMsg "SA_PROBE: probe failure" False
+
+    nonconsuming choice P_FailStatus : () with
+      controller owner
+      do failWithStatus FailureStatus
+           { errorId = "SA_PROBE_STATUS"
+           , category = InvalidGivenCurrentSystemStateOther
+           , message = "SA_PROBE_STATUS: probe status failure"
+           , meta = TextMap.empty
+           }

@@ -1,0 +1,19 @@
+{
+  "code": "DAML_AUTHORIZATION_ERROR",
+  "cause": "Interpretation error: Error: node NodeId(0) (4fe313ea75c585825704535c75a84d299b6c24aaf17282dbe73f9180277a19a4:Probe:P) requires authorizers probe-376f2f-sv::12208f0dd00880259ca0cfa0b60835482c675cc298405b03853d03c8fbc501b9e0c8, but only probe-376f2f-prov::1220664b7ad6b3e7173af640e9c0ed18984009146b0dbfde20a646dc11b842c06ba3 were given",
+  "correlationId": "f06d9128-e92a-460c-8a39-5da52910f6b0",
+  "traceId": "d8d748f622ecad64ae7f6e51be36f2d1",
+  "context": {
+    "participant": "'app-provider'",
+    "category": "8",
+    "tid": "d8d748f622ecad64ae7f6e51be36f2d1",
+    "definite_answer": "false",
+    "commands": "{readAs: [], deduplicationPeriod: {duration: 'PT30S'}, submittedAt: '2026-11-21T20:51:22.691629Z', submissionId: 'f06d9128-e92a-460c-8a39-5da52910f6b0', actAs: ['probe-376f2f-prov::1220664b7ad6b3e7173af640e9c0ed18984009146b0dbfde20a646dc11b842c06ba3'], commandId: 'probe-e6f51f-1795294282681', userId: 'probe-376f2f-provu', workflowId: }"
+  },
+  "resources": [],
+  "errorCategory": 8,
+  "grpcCodeValue": 3,
+  "retryInfo": null,
+  "definiteAnswer": null,
+  "_httpStatus": 400
+}

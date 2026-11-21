@@ -1,0 +1,13 @@
+{
+  "code": "NA",
+  "cause": "A security-sensitive error has been received",
+  "correlationId": "ef5caf8b2c02e7540d883ee07ebe30c5",
+  "traceId": "ef5caf8b2c02e7540d883ee07ebe30c5",
+  "context": {},
+  "resources": [],
+  "errorCategory": -1,
+  "grpcCodeValue": 7,
+  "retryInfo": null,
+  "definiteAnswer": null,
+  "_httpStatus": 403
+}

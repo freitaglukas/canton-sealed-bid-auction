@@ -1,0 +1,24 @@
+{
+  "code": "CONTRACT_NOT_FOUND",
+  "cause": "Contract could not be found with id 00af9745d0ababababababababababababababababababababababababababababca1212202c0dc12156c70251134813af913666b875eb0a5bf412bf12bba9e88f01c44dd3",
+  "correlationId": "46d08cad-1038-442a-a62c-dc013a7763c4",
+  "traceId": "84a9cc25a4766b1875965bbea8e4b864",
+  "context": {
+    "participant": "'sv'",
+    "category": "11",
+    "tid": "84a9cc25a4766b1875965bbea8e4b864",
+    "definite_answer": "false",
+    "commands": "{readAs: [], deduplicationPeriod: {duration: 'PT30S'}, submittedAt: '2026-11-21T20:51:22.653291Z', submissionId: '46d08cad-1038-442a-a62c-dc013a7763c4', actAs: ['probe-376f2f-sv::12208f0dd00880259ca0cfa0b60835482c675cc298405b03853d03c8fbc501b9e0c8'], commandId: 'probe-b7ce14-1795294282624', userId: 'probe-376f2f-svu', workflowId: }"
+  },
+  "resources": [
+    [
+      "CONTRACT_ID",
+      "00af9745d0ababababababababababababababababababababababababababababca1212202c0dc12156c70251134813af913666b875eb0a5bf412bf12bba9e88f01c44dd3"
+    ]
+  ],
+  "errorCategory": 11,
+  "grpcCodeValue": 5,
+  "retryInfo": null,
+  "definiteAnswer": null,
+  "_httpStatus": 404
+}
