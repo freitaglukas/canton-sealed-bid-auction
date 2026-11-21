@@ -106,6 +106,6 @@ describe.skipIf(!live || !DAR)('live: probe flow (needs TEST_DAR = test/probe/.d
     const err = await co.exercise(PROBE, '00' + 'ab'.repeat(33), 'Ping', { viewer: owner }, [owner]).catch((e) => e)
     expect(err).toBeInstanceOf(LedgerError)
     expect(err.httpStatus).toBeGreaterThanOrEqual(400)
-    console.log('error sample', JSON.stringify(err.raw), 'disclosed outcome', dis instanceof Error ? dis.code : 'ok')
+    console.log('error sample', JSON.stringify(err.raw), 'disclosed outcome', dis instanceof LedgerError ? dis.code : 'ok')
   })
 })
