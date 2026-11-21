@@ -119,9 +119,18 @@ test_ensureInvariants = script do
   length leftovers === 0
   -- Positive control: a valid auction is accepted.
   r <- tryCreate "OK" "Painting" [w.alice, w.bob, w.dave]
-  case r of
+  okCid <- case r of
     Left e -> abort ("valid auction rejected: " <> show e)
-    Right _ -> pure ()
+    Right cid -> pure cid
+  ok <- fetchActive w.auctioneer okCid
+  -- A direct create must also record exactly 3 distinct invitations.
+  let directCreate what invs = expectPreconditionFailure what =<< trySubmit w.auctioneer (createCmd ok with invitations = invs)
+  case ok.invitations of
+    [i1, i2, _] -> do
+      directCreate "direct create, 2 invitations" [i1, i2]
+      directCreate "direct create, duplicate invitation" [i1, i1, i2]
+      directCreate "direct create, 4 invitations" (ok.invitations ++ [i1])
+    _ -> abort "expected 3 invitations"
 
 -- ---------------------------------------------------------------------------
 -- Winner selection: max amount, then earliest submittedAt, then lowest party text.
@@ -207,6 +216,70 @@ test_noBids = script do
     n.bidder === p
   outcomes <- query @AuctionOutcome w.auctioneer
   length outcomes === 0
+
+-- | Hardening for a hand-made root: even when a directly created 'Auction'
+-- records the inputs as its invitations, close still requires every input to
+-- belong to the recorded invitees, auction id and item.
+test_forgedRootInputsMustMatchAuction : Script ()
+test_forgedRootInputsMustMatchAuction = script do
+  w <- setupWorld
+  (_, invsA) <- openAuction w "A" "Painting"
+  (_, invsB) <- openAuction w "B" "Vase"
+  let forgeInv bidder aid itm = submit w.auctioneer $ createCmd AuctionInvitation with
+        auctioneer = w.auctioneer; bidder; auctionId = aid; item = itm
+      forgeRoot invs = submit w.auctioneer $ createCmd Auction with
+        auctioneer = w.auctioneer; auctionId = "A"; item = "Painting"
+        invitees = [w.alice, w.bob, w.carol]; invitations = invs
+      closeForged invs = do
+        root <- forgeRoot invs
+        tryClose w root [] invs
+
+  -- An invitation from auction B (right bidder, wrong auction and item).
+  expectSA "SA_UNKNOWN_INVITATION" =<< closeForged [invOf w.alice invsA, invOf w.bob invsA, invOf w.carol invsB]
+  -- Right bidder and auction id, wrong item.
+  wrongItem <- forgeInv w.carol "A" "Fake"
+  expectSA "SA_UNKNOWN_INVITATION" =<< closeForged [invOf w.alice invsA, invOf w.bob invsA, wrongItem]
+  -- Right auction and item, but a bidder who is not an invitee.
+  forDave <- forgeInv w.dave "A" "Painting"
+  expectSA "SA_UNKNOWN_INVITATION" =<< closeForged [invOf w.alice invsA, invOf w.bob invsA, forDave]
+  -- Two invitations for one invitee, none for another.
+  bobAgain <- forgeInv w.bob "A" "Painting"
+  expectSA "SA_UNKNOWN_INVITATION" =<< closeForged [invOf w.alice invsA, invOf w.bob invsA, bobAgain]
+
+-- | Trust boundary (spec Q6): 'Auction' is signed by the auctioneer alone, so
+-- the auctioneer can archive the real root and create a replacement whose
+-- invitations swap a real bidder's (consumed) invitation for a forged one. The
+-- ledger cannot prevent that close; it leaves evidence instead: the suppressed
+-- bidder's real Bid stays active next to a NoBidNotice for the same auction.
+test_rootReplacementIsTrustBoundary : Script ()
+test_rootReplacementIsTrustBoundary = script do
+  w <- setupWorld
+  (auction, invs) <- openAuction w "A" "Painting"
+  ba <- placeBid w.alice (invOf w.alice invs) 100.0
+  bb <- placeBid w.bob (invOf w.bob invs) 150.0
+  bc <- placeBid w.carol (invOf w.carol invs) 200.0
+
+  forgedCarol <- submit w.auctioneer $ createCmd AuctionInvitation with
+    auctioneer = w.auctioneer; bidder = w.carol; auctionId = "A"; item = "Painting"
+  submit w.auctioneer $ exerciseCmd auction Archive
+  forgedRoot <- submit w.auctioneer $ createCmd Auction with
+    auctioneer = w.auctioneer; auctionId = "A"; item = "Painting"
+    invitees = [w.alice, w.bob, w.carol]
+    invitations = [invOf w.alice invs, invOf w.bob invs, forgedCarol]
+
+  res <- closeAuction w forgedRoot [ba, bb] [forgedCarol]
+  res.winner === Some w.bob
+  res.price === Some 150.0
+
+  -- Evidence: carol's real (highest) bid is still active, visible to carol,
+  -- alongside a NoBidNotice for the same auction.
+  carolBid <- fetchActive w.carol bc
+  carolBid.amount === 200.0
+  carolBid.auctionId === "A"
+  notice <- single "carol notice" =<< noticesFor w.carol "A"
+  notice.bidder === w.carol
+  carolOutcomes <- outcomesFor w.carol "A"
+  length carolOutcomes === 0
 
 -- | Trust boundary (spec Q6): the auctioneer can conclude a bid outside close,
 -- but then the honest close path fails safe instead of awarding silently.
