@@ -27,13 +27,19 @@ export interface Mapped { status: number; code: ErrorCode; error: string }
 // ---- Table-driven classification; extend these lists when live codes are known. ----
 export const CONTRACT_NOT_FOUND_CODES = ['CONTRACT_NOT_FOUND']
 export const AUTHORIZATION_CODE_PATTERNS = [/AUTHORIZATION/i, /^DAML_AUTHORIZATION_ERROR$/]
+/** Missing user right: HTTP 403 with the opaque code `NA` (security-sensitive error). */
+export const AUTHORIZATION_OPAQUE_CODES = ['NA']
+/** Retryable contention. */
+export const CONTENTION_CODES = ['LOCAL_VERDICT_LOCKED_CONTRACTS']
 export const LINEAGE_ERROR_IDS = ['SA_INCOMPLETE_CLOSE']
 
 export const isContractNotFound = (e: LedgerError) => CONTRACT_NOT_FOUND_CODES.includes(e.code)
-export const isAuthorization = (e: LedgerError) => AUTHORIZATION_CODE_PATTERNS.some((re) => re.test(e.code))
+export const isAuthorization = (e: LedgerError) =>
+  AUTHORIZATION_CODE_PATTERNS.some((re) => re.test(e.code)) || (e.httpStatus === 403 && AUTHORIZATION_OPAQUE_CODES.includes(e.code))
+export const isContention = (e: LedgerError) => CONTENTION_CODES.includes(e.code)
 export const isLineage = (e: LedgerError) => e.errorId !== undefined && LINEAGE_ERROR_IDS.includes(e.errorId)
 /** Worth re-reading and retrying a close. */
-export const isCloseRetryable = (e: LedgerError) => e.retryable || isLineage(e) || isContractNotFound(e)
+export const isCloseRetryable = (e: LedgerError) => e.retryable || isContention(e) || isLineage(e) || isContractNotFound(e)
 
 interface Rule {
   when: (e: LedgerError, c: MapContext) => boolean
