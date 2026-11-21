@@ -1,0 +1,1 @@
+{"code":"DAML_AUTHORIZATION_ERROR","cause":"Interpretation error: node NodeId(0) (#sealed-auction:SealedAuction.Auction:Bid) requires authorizers bob, but only alice were given","correlationId":"c2","context":{"category":"8","definite_answer":"false"},"errorCategory":8,"grpcCodeValue":3}

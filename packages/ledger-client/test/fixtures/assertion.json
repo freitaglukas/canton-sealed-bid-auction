@@ -1,0 +1,1 @@
+{"code":"UNHANDLED_EXCEPTION","cause":"Interpretation error: Error: Unhandled Daml exception: DA.Exception.AssertionFailed:AssertionFailed@3f4a{ message = \"SA_INCOMPLETE_CLOSE: close must list every bid\" }","correlationId":"c3","context":{"category":"9","definite_answer":"false"},"errorCategory":9,"grpcCodeValue":9}

@@ -1,0 +1,1 @@
+{"code":"CONTRACT_NOT_FOUND","cause":"Contract could not be found with id 00abc123","correlationId":"c1","context":{"contract_id":"00abc123","participant":"app-user"},"errorCategory":11,"grpcCodeValue":5}
