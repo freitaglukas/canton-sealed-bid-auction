@@ -1,0 +1,14 @@
+module Probe where
+
+template Thing
+  with
+    owner : Party
+    label : Text
+  where
+    signatory owner
+
+    nonconsuming choice Ping : Text
+      with
+        viewer : Party
+      controller viewer
+      do pure ("pong:" <> label)
