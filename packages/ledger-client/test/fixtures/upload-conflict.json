@@ -1,0 +1,20 @@
+{
+  "code": "KNOWN_PACKAGE_VERSION",
+  "cause": "Tried to vet two packages with the same name and version: 4fe313ea75c585825704535c75a84d299b6c24aaf17282dbe73f9180277a19a4 (sa-probe v0.1.0) and b4a962a41ba8843f59db52f476f5327d7e3beeeadbbd4918da055671a41fbfb0 (sa-probe v0.1.0).",
+  "correlationId": null,
+  "traceId": "c8230ed081bf19e203a02293cac84166",
+  "context": {
+    "participant": "app-provider",
+    "secondPackage": "b4a962a41ba8843f59db52f476f5327d7e3beeeadbbd4918da055671a41fbfb0 (sa-probe v0.1.0)",
+    "firstPackage": "4fe313ea75c585825704535c75a84d299b6c24aaf17282dbe73f9180277a19a4 (sa-probe v0.1.0)",
+    "category": "8",
+    "tid": "c8230ed081bf19e203a02293cac84166",
+    "action": "package-vetting"
+  },
+  "resources": [],
+  "errorCategory": 8,
+  "grpcCodeValue": 3,
+  "retryInfo": null,
+  "definiteAnswer": null,
+  "_httpStatus": 400
+}
