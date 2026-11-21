@@ -13,12 +13,14 @@ export interface ServerDeps {
   topology: Topology
   /** userId -> password */
   credentials: Record<string, string>
+  /** enable Fastify request logging (default false) */
+  logger?: boolean
   /** test-only hooks */
   hooks?: { beforeCloseSubmit?: () => Promise<void> }
 }
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false })
+  const app = Fastify({ logger: deps.logger ?? false })
   await app.register(cookie, { secret: newSecret() })
   const svc = createAuctionService(deps)
 

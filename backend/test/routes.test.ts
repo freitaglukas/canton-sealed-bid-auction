@@ -236,6 +236,22 @@ describe('close conflict', () => {
   })
 })
 
+describe('competing close', () => {
+  it('re-read finding no active Auction after a failed submit is AUCTION_CLOSED, not CLOSE_CONFLICT', async () => {
+    const { auctionId } = (await createAuction()).json()
+    const cookies = await as('auctioneer')
+    let raced = false
+    beforeClose = async () => {
+      if (raced) return
+      raced = true
+      await app.inject({ method: 'POST', url: `/api/auctions/${auctionId}/close`, cookies })
+    }
+    const res = await app.inject({ method: 'POST', url: `/api/auctions/${auctionId}/close`, cookies })
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toMatchObject({ code: 'AUCTION_CLOSED', ledgerCode: 'CONTRACT_NOT_FOUND' })
+  })
+})
+
 describe('isolation', () => {
   it("routes use only the caller's ledger client", async () => {
     await createAuction()

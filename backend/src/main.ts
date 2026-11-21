@@ -22,7 +22,7 @@ const parties = loadParties()
 const credentialsPath = process.env.CREDENTIALS ? resolve(process.env.CREDENTIALS) : join(repoRoot(), 'config/credentials.json')
 const credentials: Record<string, string> = JSON.parse(readFileSync(credentialsPath, 'utf8'))
 
-const app = await buildServer({ ledgerFor: (u) => ledgerForUser(u, topology), parties, topology, credentials })
+const app = await buildServer({ ledgerFor: (u) => ledgerForUser(u, topology), parties, topology, credentials, logger: true })
 const port = Number(process.env.PORT ?? 8787)
 await app.listen({ port, host: '127.0.0.1' })
 console.log(`backend listening on http://127.0.0.1:${port}`)
