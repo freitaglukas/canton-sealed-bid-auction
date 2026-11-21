@@ -48,19 +48,42 @@ describe('client request/response shapes', () => {
     expect(reqs[0].body.commands.actAs).toEqual(['p1'])
   })
 
+  const acsRow = (i: number) => ({ contractEntry: { JsActiveContract: { createdEvent: { contractId: `c${i}`, templateId: 't', createArgument: { i } } } } })
+
   it('activeContracts passes explicit offset and wildcard / any-party filters', async () => {
     reqs.length = 0
     handler = (r) =>
       r.url.includes('ledger-end')
         ? { json: { offset: 42 } }
-        : { json: [{ contractEntry: { JsActiveContract: { createdEvent: { contractId: 'c', templateId: 't', createArgument: { x: 1 }, createdEventBlob: 'blob' } } } }] }
+        : { json: { activeAtOffset: 42, activeContracts: [{ contractEntry: { JsActiveContract: { createdEvent: { contractId: 'c', templateId: 't', createArgument: { x: 1 }, createdEventBlob: 'blob' } } } }] } }
     const c = createLedgerClient(base, 'auditor')
     const rows = await c.activeContracts('ANY', 'ALL', { includeBlob: true })
     expect(rows).toEqual([{ contractId: 'c', templateId: 't', payload: { x: 1 }, createdEventBlob: 'blob' }])
     const acs = reqs.find((r) => r.url.startsWith('/v2/state/active-contracts'))!
+    expect(acs.url).toBe('/v2/state/active-contracts-page')
     expect(acs.body.activeAtOffset).toBe(42)
     expect(acs.body.eventFormat.filtersForAnyParty.cumulative[0].identifierFilter.WildcardFilter.value.includeCreatedEventBlob).toBe(true)
     expect(reqs[0].auth).toMatch(/^Bearer ey/) // minted token
+  })
+
+  it('activeContracts pages 450 contracts across 3 pages with a pinned offset', async () => {
+    reqs.length = 0
+    const all = Array.from({ length: 450 }, (_, i) => i)
+    handler = (r) => {
+      if (r.url.includes('ledger-end')) return { json: { offset: 99 } }
+      const start = r.body.pageToken ? Number(r.body.pageToken) : 0
+      const size = r.body.maxPageSize as number
+      if (!(size <= 200)) return { status: 413, json: { code: 'JSON_API_MAXIMUM_LIST_ELEMENTS_NUMBER_REACHED', cause: 'too many', context: {}, errorCategory: 2 } }
+      const end = Math.min(start + size, 450)
+      return { json: { activeAtOffset: 99, activeContracts: all.slice(start, end).map(acsRow), ...(end < 450 ? { nextPageToken: String(end) } : {}) } }
+    }
+    const rows = await createLedgerClient(base, 'a', 't').activeContracts('p', 'ALL')
+    expect(rows).toHaveLength(450)
+    expect(rows.map((x) => x.contractId)).toEqual(all.map((i) => `c${i}`))
+    const pages = reqs.filter((r) => r.url.startsWith('/v2/state/active-contracts'))
+    expect(pages).toHaveLength(3)
+    expect(pages.every((p) => p.body.activeAtOffset === 99)).toBe(true)
+    expect(pages[0].body.pageToken).toBeUndefined()
   })
 
   it('updates pages until endInclusive', async () => {
@@ -69,14 +92,41 @@ describe('client request/response shapes', () => {
     handler = (r) => {
       if (r.url.includes('ledger-end')) return { json: { offset: 250 } }
       const b = r.body.beginExclusive as number
-      const end = Math.min(b + 100, 250)
+      const lim = Number(new URL(r.url, 'http://x').searchParams.get('limit'))
+      const end = Math.min(b + lim, 250)
       return { json: Array.from({ length: end - b }, (_, i) => tx(b + i + 1)) }
     }
     const c = createLedgerClient(base, 'alice', 't')
     const txs = await c.updates('p', 0)
     expect(txs).toHaveLength(250)
     expect(txs.at(-1)!.offset).toBe(250)
-    expect(reqs.filter((r) => r.url.startsWith('/v2/updates'))).toHaveLength(3)
+    expect(reqs.filter((r) => r.url.startsWith('/v2/updates'))).toHaveLength(2)
+  })
+
+  it('updates halves the limit on 413 and retries the same range', async () => {
+    reqs.length = 0
+    const tx = (o: number) => ({ update: { Transaction: { value: { updateId: `u${o}`, offset: o, events: [] } } } })
+    handler = (r) => {
+      if (r.url.includes('ledger-end')) return { json: { offset: 30 } }
+      const lim = Number(new URL(r.url, 'http://x').searchParams.get('limit'))
+      if (lim > 10) return { status: 413, json: { code: 'JSON_API_MAXIMUM_LIST_ELEMENTS_NUMBER_REACHED', cause: 'x', context: {}, errorCategory: 2 } }
+      const b = r.body.beginExclusive as number
+      const end = Math.min(b + lim, 30)
+      return { json: Array.from({ length: end - b }, (_, i) => tx(b + i + 1)) }
+    }
+    const txs = await createLedgerClient(base, 'alice', 't').updates('p', 0)
+    expect(txs.map((t) => t.offset)).toEqual(Array.from({ length: 30 }, (_, i) => i + 1))
+    const limits = reqs.filter((r) => r.url.startsWith('/v2/updates')).map((r) => Number(new URL(r.url, 'http://x').searchParams.get('limit')))
+    expect(limits[0]).toBeLessThanOrEqual(200)
+    expect(limits.slice(0, 4)).toEqual([200, 100, 50, 25])
+    expect(reqs.filter((r) => r.url.startsWith('/v2/updates')).slice(0, 5).every((r) => r.body.beginExclusive === 0)).toBe(true)
+  })
+
+  it('updates gives up when 413 persists at limit 1', async () => {
+    handler = (r) => (r.url.includes('ledger-end') ? { json: { offset: 5 } } : { status: 413, json: { code: 'JSON_API_MAXIMUM_LIST_ELEMENTS_NUMBER_REACHED', cause: 'x', context: {} } })
+    const e = await createLedgerClient(base, 'a', 't').updates('p', 0).catch((x) => x)
+    expect(e).toBeInstanceOf(LedgerError)
+    expect(e.httpStatus).toBe(413)
   })
 
   it('sends disclosedContracts with createdEventBlob', async () => {

@@ -1,7 +1,7 @@
 import createClient from 'openapi-fetch'
 import { randomUUID } from 'node:crypto'
 import type { paths, components } from './generated/openapi'
-import { parseLedgerError } from './errors'
+import { LedgerError, parseLedgerError } from './errors'
 import { mintToken } from './jwt'
 import type { Contract, DisclosedContract, LedgerClient, LedgerEvent, LedgerTransaction } from './types'
 
@@ -10,7 +10,8 @@ type Filters = Schemas['Filters']
 type EventFormat = Schemas['EventFormat']
 type Command = Schemas['Command']
 
-const UPDATES_PAGE = 100
+// The node rejects (HTTP 413) any ACS/updates read matching more than 200 elements.
+const PAGE_MAX = 200
 
 const wildcard = (includeBlob = false): Filters => ({
   cumulative: [{ identifierFilter: { WildcardFilter: { value: { includeCreatedEventBlob: includeBlob } } } }],
@@ -166,23 +167,28 @@ export function createLedgerClient(baseUrl: string, userId: string, token?: stri
       const includeBlob = opts?.includeBlob ?? false
       const filters = templateIds === 'ALL' ? wildcard(includeBlob) : templateFilters(templateIds, includeBlob)
       const activeAtOffset = opts?.atOffset ?? (await ledgerEnd())
-      const rows = check(
-        await http.POST('/v2/state/active-contracts', {
-          body: { activeAtOffset, eventFormat: eventFormatFor(party === 'ANY' ? 'ANY' : [party], filters) },
-        }),
-      )
+      const eventFormat = eventFormatFor(party === 'ANY' ? 'ANY' : [party], filters)
       const out: Contract<P>[] = []
-      for (const row of rows as Schemas['JsGetActiveContractsResponse'][]) {
-        const entry = untag(row.contractEntry)
-        if (!entry || entry[0] !== 'JsActiveContract') continue
-        const ev = entry[1].createdEvent
-        out.push({
-          contractId: ev.contractId,
-          templateId: ev.templateId,
-          payload: ev.createArgument as P,
-          ...(ev.createdEventBlob ? { createdEventBlob: ev.createdEventBlob } : {}),
-        })
-      }
+      let pageToken: string | undefined
+      do {
+        const page = check(
+          await http.POST('/v2/state/active-contracts-page', {
+            body: { activeAtOffset, eventFormat, maxPageSize: PAGE_MAX, ...(pageToken ? { pageToken } : {}) },
+          }),
+        )
+        for (const row of page.activeContracts ?? []) {
+          const entry = untag(row.contractEntry)
+          if (!entry || entry[0] !== 'JsActiveContract') continue
+          const ev = entry[1].createdEvent
+          out.push({
+            contractId: ev.contractId,
+            templateId: ev.templateId,
+            payload: ev.createArgument as P,
+            ...(ev.createdEventBlob ? { createdEventBlob: ev.createdEventBlob } : {}),
+          })
+        }
+        pageToken = page.nextPageToken || undefined
+      } while (pageToken)
       return out
     },
 
@@ -191,19 +197,30 @@ export function createLedgerClient(baseUrl: string, userId: string, token?: stri
       const eventFormat = eventFormatFor(party === 'ANY' ? 'ANY' : [party], wildcard())
       const txs: LedgerTransaction[] = []
       let begin = beginExclusive
+      let limit = PAGE_MAX
       while (begin < end) {
-        const rows = check(
-          await http.POST('/v2/updates', {
-            params: { query: { limit: UPDATES_PAGE } },
-            body: {
-              beginExclusive: begin,
-              endInclusive: end,
-              updateFormat: {
-                includeTransactions: { eventFormat, transactionShape: 'TRANSACTION_SHAPE_LEDGER_EFFECTS' },
+        let rows: Schemas['JsGetUpdatesResponse'][]
+        try {
+          rows = check(
+            await http.POST('/v2/updates', {
+              params: { query: { limit } },
+              body: {
+                beginExclusive: begin,
+                endInclusive: end,
+                updateFormat: {
+                  includeTransactions: { eventFormat, transactionShape: 'TRANSACTION_SHAPE_LEDGER_EFFECTS' },
+                },
               },
-            },
-          }),
-        ) as Schemas['JsGetUpdatesResponse'][]
+            }),
+          ) as Schemas['JsGetUpdatesResponse'][]
+        } catch (e) {
+          // 413: too many elements for this range; retry the same range with a smaller limit.
+          if (e instanceof LedgerError && e.httpStatus === 413 && limit > 1) {
+            limit = Math.max(1, Math.floor(limit / 2))
+            continue
+          }
+          throw e
+        }
         let last = begin
         for (const row of rows) {
           const u = untag(row.update)
@@ -212,7 +229,7 @@ export function createLedgerClient(baseUrl: string, userId: string, token?: stri
           if (typeof v?.offset === 'number') last = Math.max(last, v.offset)
           if (u[0] === 'Transaction') txs.push(toTransaction(v))
         }
-        if (rows.length < UPDATES_PAGE || last <= begin) break
+        if (rows.length < limit || last <= begin) break
         begin = last
       }
       return txs
