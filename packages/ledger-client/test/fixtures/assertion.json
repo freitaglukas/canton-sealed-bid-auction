@@ -1,1 +1,21 @@
-{"code":"UNHANDLED_EXCEPTION","cause":"Interpretation error: Error: Unhandled Daml exception: DA.Exception.AssertionFailed:AssertionFailed@3f4a{ message = \"SA_INCOMPLETE_CLOSE: close must list every bid\" }","correlationId":"c3","context":{"category":"9","definite_answer":"false"},"errorCategory":9,"grpcCodeValue":9}
+{
+  "code": "DAML_FAILURE",
+  "cause": "Interpretation error: Error: User failure: UNHANDLED_EXCEPTION/DA.Exception.AssertionFailed:AssertionFailed (error category 9): SA_PROBE: probe failure",
+  "correlationId": "98a849a4-a0de-4cfc-9fb1-3d62d0cdc22a",
+  "traceId": "1a591324321ae52400eff2e402eec399",
+  "context": {
+    "participant": "'app-provider'",
+    "error_id": "UNHANDLED_EXCEPTION/DA.Exception.AssertionFailed:AssertionFailed",
+    "exercise_trace": "    in choice 4fe313ea:Probe:P:P_Fail on contract 0053ca2255 (#0)\n    in exercise command 4fe313ea:Probe:P:P_Fail on contract 0053ca2255.\n",
+    "category": "9",
+    "tid": "1a591324321ae52400eff2e402eec399",
+    "definite_answer": "false",
+    "commands": "{readAs: [], deduplicationPeriod: {duration: 'PT30S'}, submittedAt: '2026-11-21T20:51:23.166601Z', submissionId: '98a849a4-a0de-4cfc-9fb1-3d62d0cdc22a', actAs: ['probe-376f2f-prov::1220664b7ad6b3e7173af640e9c0ed18984009146b0dbfde20a646dc11b842c06ba3'], commandId: 'probe-fca17a-1795294283161', userId: 'probe-376f2f-provu', workflowId: }"
+  },
+  "resources": [],
+  "errorCategory": 9,
+  "grpcCodeValue": 9,
+  "retryInfo": null,
+  "definiteAnswer": null,
+  "_httpStatus": 400
+}

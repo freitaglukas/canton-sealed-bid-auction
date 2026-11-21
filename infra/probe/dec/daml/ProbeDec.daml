@@ -1,0 +1,12 @@
+module ProbeDec where
+
+-- Separate package so the main sa-probe stays exactly as specified.
+template D
+  with
+    owner : Party
+    amount : Decimal
+    n : Int
+    at : Time
+    maybeAmt : Optional Decimal
+  where
+    signatory owner

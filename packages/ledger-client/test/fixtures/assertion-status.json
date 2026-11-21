@@ -1,0 +1,21 @@
+{
+  "code": "DAML_FAILURE",
+  "cause": "Interpretation error: Error: User failure: SA_PROBE_STATUS (error category 9): SA_PROBE_STATUS: probe status failure",
+  "correlationId": "b418b994-afdf-485b-8163-2dc7beb44401",
+  "traceId": "f3b4b39a2d38141642d3b52caac9bfe9",
+  "context": {
+    "participant": "'app-provider'",
+    "error_id": "SA_PROBE_STATUS",
+    "exercise_trace": "    in choice 4fe313ea:Probe:P:P_FailStatus on contract 0053ca2255 (#0)\n    in exercise command 4fe313ea:Probe:P:P_FailStatus on contract 0053ca2255.\n",
+    "category": "9",
+    "tid": "f3b4b39a2d38141642d3b52caac9bfe9",
+    "definite_answer": "false",
+    "commands": "{readAs: [], deduplicationPeriod: {duration: 'PT30S'}, submittedAt: '2026-11-21T20:51:23.178762Z', submissionId: 'b418b994-afdf-485b-8163-2dc7beb44401', actAs: ['probe-376f2f-prov::1220664b7ad6b3e7173af640e9c0ed18984009146b0dbfde20a646dc11b842c06ba3'], commandId: 'probe-0f329d-1795294283174', userId: 'probe-376f2f-provu', workflowId: }"
+  },
+  "resources": [],
+  "errorCategory": 9,
+  "grpcCodeValue": 9,
+  "retryInfo": null,
+  "definiteAnswer": null,
+  "_httpStatus": 400
+}

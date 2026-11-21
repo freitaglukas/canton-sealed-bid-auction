@@ -1,0 +1,24 @@
+{
+  "code": "CONTRACT_NOT_FOUND",
+  "cause": "Contract could not be found with id 00729d04d28d55fd5519a2ec9fb4ee2e70f85a32e47fbfc76e8c31d7204a91801dca121220cfb1fe86435d9879cca2fe24ac2bf5bc00e252f52af624e0472c97354f982bef",
+  "correlationId": "4ac456b6-8e5e-41a6-828f-741ef4d9ad1e",
+  "traceId": "0388a45cadd3ead39d5e91d8abebf86f",
+  "context": {
+    "participant": "'app-provider'",
+    "category": "11",
+    "tid": "0388a45cadd3ead39d5e91d8abebf86f",
+    "definite_answer": "false",
+    "commands": "{readAs: [], deduplicationPeriod: {duration: 'PT30S'}, submittedAt: '2026-11-21T20:51:24.613846Z', submissionId: '4ac456b6-8e5e-41a6-828f-741ef4d9ad1e', actAs: ['probe-376f2f-prov::1220664b7ad6b3e7173af640e9c0ed18984009146b0dbfde20a646dc11b842c06ba3'], commandId: 'probe-6f3964-1795294284606', userId: 'probe-376f2f-provu', workflowId: }"
+  },
+  "resources": [
+    [
+      "CONTRACT_ID",
+      "00729d04d28d55fd5519a2ec9fb4ee2e70f85a32e47fbfc76e8c31d7204a91801dca121220cfb1fe86435d9879cca2fe24ac2bf5bc00e252f52af624e0472c97354f982bef"
+    ]
+  ],
+  "errorCategory": 11,
+  "grpcCodeValue": 5,
+  "retryInfo": null,
+  "definiteAnswer": null,
+  "_httpStatus": 404
+}
