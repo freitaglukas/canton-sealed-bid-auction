@@ -10,3 +10,4 @@ playwright-report/
 dist/
 *.log
 .DS_Store
+.claude/
