@@ -1,0 +1,105 @@
+-- | Shared Daml Script fixtures for the sealed-auction tests.
+module Tests.Fixtures where
+
+import DA.Optional (fromSomeNote, isSome)
+import DA.Text (isInfixOf, isPrefixOf)
+import Daml.Script
+
+import SealedAuction.Auction
+
+data World = World with
+    auctioneer, alice, bob, carol, dave : Party
+    role : ContractId AuctioneerRole
+
+-- | Allocates the five demo parties and the auctioneer's role contract.
+setupWorld : Script World
+setupWorld = setupWorldWith ""
+
+-- | Same as 'setupWorld', with a suffix on every party hint, so one script can
+-- build several structurally identical worlds.
+setupWorldWith : Text -> Script World
+setupWorldWith suffix = do
+  let alloc hint = allocatePartyByHint (PartyIdHint (hint <> suffix))
+  auctioneer <- alloc "auctioneer"
+  alice <- alloc "alice"
+  bob <- alloc "bob"
+  carol <- alloc "carol"
+  dave <- alloc "dave"
+  role <- submit auctioneer $ createCmd AuctioneerRole with auctioneer
+  pure World with ..
+
+-- | Opens an auction that always invites alice, bob and carol. Returns the
+-- auction and each invitee's invitation.
+openAuction : World -> Text -> Text -> Script (ContractId Auction, [(Party, ContractId AuctionInvitation)])
+openAuction w aid itm = do
+  auctionCid <- submit w.auctioneer $
+    exerciseCmd w.role CreateAuction with
+      auctionId = aid
+      item = itm
+      invitees = [w.alice, w.bob, w.carol]
+  auction <- fetchActive w.auctioneer auctionCid
+  invs <- forA auction.invitations \cid -> do
+    inv <- fetchActive w.auctioneer cid
+    pure (inv.bidder, cid)
+  pure (auctionCid, invs)
+
+-- | The invitation addressed to a party.
+invOf : Party -> [(Party, ContractId AuctionInvitation)] -> ContractId AuctionInvitation
+invOf p invs = fromSomeNote ("no invitation for " <> show p) (lookup p invs)
+
+placeBid : Party -> ContractId AuctionInvitation -> Decimal -> Script (ContractId Bid)
+placeBid p inv amt = submit p $ exerciseCmd inv PlaceBid with amount = amt
+
+closeAuction : World -> ContractId Auction -> [ContractId Bid] -> [ContractId AuctionInvitation] -> Script AuctionResult
+closeAuction w auction bs opens = do
+  resCid <- submit w.auctioneer $ exerciseCmd auction Auction_Close with bids = bs; openInvitations = opens
+  fetchActive w.auctioneer resCid
+
+tryClose : World -> ContractId Auction -> [ContractId Bid] -> [ContractId AuctionInvitation] -> Script (Either SubmitError (ContractId AuctionResult))
+tryClose w auction bs opens =
+  trySubmit w.auctioneer $ exerciseCmd auction Auction_Close with bids = bs; openInvitations = opens
+
+fetchActive : (Template t, HasEnsure t) => Party -> ContractId t -> Script t
+fetchActive p cid = do
+  r <- queryContractId p cid
+  pure (fromSomeNote ("contract not active / not visible to " <> show p) r)
+
+isActive : (Template t, HasEnsure t) => Party -> ContractId t -> Script Bool
+isActive p cid = do
+  r <- queryContractId p cid
+  pure (isSome r)
+
+single : Text -> [a] -> Script a
+single _ [x] = pure x
+single what xs = abort ("expected exactly one " <> what <> ", got " <> show (length xs))
+
+-- | Active outcomes visible to a party for one auction.
+outcomesFor : Party -> Text -> Script [AuctionOutcome]
+outcomesFor p aid = do
+  cs <- query @AuctionOutcome p
+  pure [c | (_, c) <- cs, c.auctionId == aid]
+
+-- | Active no-bid notices visible to a party for one auction.
+noticesFor : Party -> Text -> Script [NoBidNotice]
+noticesFor p aid = do
+  cs <- query @NoBidNotice p
+  pure [c | (_, c) <- cs, c.auctionId == aid]
+
+-- | Asserts the submission failed with the given SA_* error id. With
+-- failWithStatus the structured errorId must match and the message must start
+-- with "<id>: "; any other error shape must at least mention the id.
+expectSA : Text -> Either SubmitError a -> Script ()
+expectSA errId r = case r of
+  Right _ -> abort ("expected " <> errId <> " but the submission succeeded")
+  Left (FailureStatusError fs) -> do
+    assertMsg ("expected errorId " <> errId <> ", got " <> fs.errorId) (fs.errorId == errId)
+    assertMsg ("expected message prefix " <> errId <> ": , got " <> fs.message)
+      ((errId <> ": ") `isPrefixOf` fs.message)
+  Left e -> assertMsg ("expected " <> errId <> ", got " <> show e) (errId `isInfixOf` show e)
+
+-- | Asserts the submission failed on a template `ensure` (these carry no SA id).
+expectPreconditionFailure : Text -> Either SubmitError a -> Script ()
+expectPreconditionFailure what r = case r of
+  Right _ -> abort ("expected a precondition failure: " <> what)
+  Left e -> assertMsg ("expected a precondition failure (" <> what <> "), got " <> show e)
+    ("PreconditionFailed" `isInfixOf` show e)

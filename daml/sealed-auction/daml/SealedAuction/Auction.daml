@@ -1,0 +1,204 @@
+-- | Sealed-bid auction: one auctioneer, exactly three invited bidders, one
+-- sealed bid each. Privacy comes from the contract shapes: every invitation,
+-- bid and outcome names a single bidder, and the 'Auction' itself has no
+-- observers, so no bidder is ever an informee of another bidder's contracts.
+module SealedAuction.Auction where
+
+import DA.Action (unless, when)
+import DA.Fail
+import DA.Foldable (forA_)
+import DA.List (dedup, maximumBy, sort, sortBy)
+import qualified DA.TextMap as TextMap
+
+-- | Every auction invites exactly this many distinct bidders.
+inviteeCount : Int
+inviteeCount = 3
+
+data BidResult
+  = Won with amountOwed : Decimal
+  | Lost
+  deriving (Eq, Show)
+
+-- | Raises a stable, machine-readable error. The id is both the structured
+-- errorId and the message prefix ("SA_X: ..."), so clients can read it either way.
+failSA : Text -> Text -> Update a
+failSA errId msg = failWithStatus FailureStatus with
+  errorId = errId
+  category = InvalidGivenCurrentSystemStateOther
+  message = errId <> ": " <> msg
+  meta = TextMap.empty
+
+-- | 'comparing' is not in the 3.6.3 stdlib (no DA.Ord), so it is defined here.
+comparing : Ord b => (a -> b) -> a -> a -> Ordering
+comparing f x y = compare (f x) (f y)
+
+-- | Lets the auctioneer create an 'Auction' together with its invitations in
+-- one transaction, so the auction can record its invitation lineage.
+template AuctioneerRole
+  with
+    auctioneer : Party
+  where
+    signatory auctioneer
+
+    nonconsuming choice CreateAuction : ContractId Auction
+      with
+        auctionId : Text
+        item : Text
+        invitees : [Party]
+      controller auctioneer
+      do
+        invitations <- forA invitees \bidder ->
+          create AuctionInvitation with auctioneer; bidder; auctionId; item
+        create Auction with auctioneer; auctionId; item; invitees; invitations
+
+-- | The auctioneer's private record of an auction. No observers: bidders are
+-- never informees of the auction or of the close's root action.
+template Auction
+  with
+    auctioneer : Party
+    auctionId : Text
+    item : Text
+    invitees : [Party]
+    invitations : [ContractId AuctionInvitation]
+  where
+    signatory auctioneer
+    ensure
+      item /= ""
+        && length invitees == inviteeCount
+        && length (dedup invitees) == inviteeCount
+        && auctioneer `notElem` invitees
+
+    -- | Every recorded invitation must be accounted for exactly once: either
+    -- still open (passed in openInvitations) or consumed by a passed bid
+    -- (bid.invitationCid). Nothing outside the recorded set is accepted.
+    choice Auction_Close : ContractId AuctionResult
+      with
+        bids : [ContractId Bid]
+        openInvitations : [ContractId AuctionInvitation]
+      controller auctioneer
+      do
+        bidData <- forA bids \cid -> do
+          b <- fetch cid
+          unless (b.auctioneer == auctioneer) $
+            failSA "SA_UNKNOWN_INVITATION" "bid belongs to a different auctioneer"
+          pure (cid, b)
+        forA_ openInvitations \cid -> do
+          inv <- fetch cid
+          unless (inv.auctioneer == auctioneer) $
+            failSA "SA_UNKNOWN_INVITATION" "invitation belongs to a different auctioneer"
+
+        let entries = map (\(_, b) -> b.invitationCid) bidData ++ openInvitations
+        when (length (dedup entries) /= length entries) $
+          failSA "SA_DUPLICATE_ENTRY" "an invitation is accounted for more than once"
+        unless (all (`elem` invitations) entries) $
+          failSA "SA_UNKNOWN_INVITATION" "input is not part of this auction's invitations"
+        unless (sort entries == sort invitations) $
+          failSA "SA_INCOMPLETE_CLOSE" "not every invitation of this auction is accounted for"
+
+        -- Highest amount; tie -> earliest submittedAt; still tied -> lowest party text.
+        let rank (_, b) = (b.amount, Down b.submittedAt, Down (partyToText b.bidder))
+            ranked = sortBy (flip (comparing rank)) bidData
+            winning = case bidData of
+              [] -> None
+              _ -> Some (maximumBy (comparing rank) bidData)
+            winnerCid = fmap fst winning
+
+        forA_ bidData \(cid, _) ->
+          exercise cid Bid_Conclude with won = Some cid == winnerCid
+        forA_ openInvitations \cid ->
+          exercise cid Invitation_Expire
+
+        create AuctionResult with
+          auctioneer
+          auctionId
+          item
+          winner = fmap (\(_, b) -> b.bidder) winning
+          price = fmap (\(_, b) -> b.amount) winning
+          bids = map (\(_, b) -> (b.bidder, b.amount)) ranked
+
+-- | One bidder's invitation. Consuming 'PlaceBid' means one bid per bidder.
+template AuctionInvitation
+  with
+    auctioneer : Party
+    bidder : Party
+    auctionId : Text
+    item : Text
+  where
+    signatory auctioneer
+    observer bidder
+
+    choice PlaceBid : ContractId Bid
+      with
+        amount : Decimal
+      controller bidder
+      do
+        unless (amount > 0.0) $
+          failSA "SA_NON_POSITIVE_BID" "bid amount must be greater than zero"
+        submittedAt <- getTime
+        create Bid with
+          auctioneer; bidder; invitationCid = self; auctionId; item; amount; submittedAt
+
+    choice Invitation_Expire : ContractId NoBidNotice
+      controller auctioneer
+      do create NoBidNotice with auctioneer; bidder; auctionId; item
+
+-- | A sealed bid, visible only to its bidder and the auctioneer.
+template Bid
+  with
+    auctioneer : Party
+    bidder : Party
+    invitationCid : ContractId AuctionInvitation
+    auctionId : Text
+    item : Text
+    amount : Decimal
+    submittedAt : Time
+  where
+    signatory bidder, auctioneer
+    ensure amount > 0.0
+
+    -- | The amount owed comes from the bid itself, not from the auctioneer.
+    choice Bid_Conclude : ContractId AuctionOutcome
+      with
+        won : Bool
+      controller auctioneer
+      do
+        create AuctionOutcome with
+          auctioneer; bidder; auctionId; item
+          bidAmount = amount
+          result = if won then Won with amountOwed = amount else Lost
+
+-- | A bidder's result. Lost carries no price and no winner; bidAmount is the
+-- bidder's own bid.
+template AuctionOutcome
+  with
+    auctioneer : Party
+    bidder : Party
+    auctionId : Text
+    item : Text
+    bidAmount : Decimal
+    result : BidResult
+  where
+    signatory auctioneer, bidder
+
+-- | Tells an invitee who never bid that the auction closed.
+template NoBidNotice
+  with
+    auctioneer : Party
+    bidder : Party
+    auctionId : Text
+    item : Text
+  where
+    signatory auctioneer
+    observer bidder
+
+-- | The auctioneer's private summary of a closed auction.
+template AuctionResult
+  with
+    auctioneer : Party
+    auctionId : Text
+    item : Text
+    winner : Optional Party
+    price : Optional Decimal
+    bids : [(Party, Decimal)]
+  where
+    signatory auctioneer

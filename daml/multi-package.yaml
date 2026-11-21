@@ -1,0 +1,3 @@
+packages:
+  - ./sealed-auction
+  - ./sealed-auction-tests
