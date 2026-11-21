@@ -1,10 +1,12 @@
 import { useState } from 'react'
-import { api, errorText } from './api'
-import { usePoll } from './usePoll'
+import { api } from './api'
+import { usePoll, usePollReporter, reportAction } from './usePoll'
 import { INVITEE_COUNT } from './constants'
 import type { AuctionSummary } from '../../backend/src/contract'
 
-export function AuctioneerView({ setError }: { setError: (e: string | null) => void }) {
+export function AuctioneerView(ctx: { setError: (e: string | null) => void; onUnauth: () => void }) {
+  const { setError } = ctx
+  const report = usePollReporter(ctx)
   const [directory, setDirectory] = useState<string[]>([])
   const [auctions, setAuctions] = useState<AuctionSummary[]>([])
   const [item, setItem] = useState('')
@@ -15,7 +17,7 @@ export function AuctioneerView({ setError }: { setError: (e: string | null) => v
     const [d, a] = await Promise.all([api.directory(), api.auctions()])
     if (d.ok) setDirectory(d.data.bidders)
     if (a.ok) setAuctions(a.data)
-    else setError(errorText(a))
+    report([d, a])
   })
 
   const toggle = (b: string) =>
@@ -25,13 +27,13 @@ export function AuctioneerView({ setError }: { setError: (e: string | null) => v
     setBusy(true); setError(null)
     const r = await api.createAuction({ item: item.trim(), bidders: picked as [string, string, string] })
     setBusy(false)
-    if (r.ok) { setItem(''); setPicked([]); refresh() } else setError(errorText(r))
+    if (r.ok) { setItem(''); setPicked([]); refresh() } else reportAction(r, ctx)
   }
 
   const close = async (id: string) => {
     setError(null)
     const r = await api.close(id)
-    if (!r.ok) setError(errorText(r))
+    reportAction(r, ctx)
     refresh()
   }
 

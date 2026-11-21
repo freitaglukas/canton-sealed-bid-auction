@@ -21,6 +21,8 @@ function App() {
 
   const logout = async () => { await api.logout(); setError(null); setUser(null) }
 
+  const onUnauth = () => { setError(null); setUser(null) }
+
   return (
     <>
       <header className="topbar">
@@ -36,8 +38,8 @@ function App() {
           </div>
         )}
         {user.role === 'auctioneer'
-          ? <AuctioneerView setError={setError} />
-          : <BidderView setError={setError} />}
+          ? <AuctioneerView setError={setError} onUnauth={onUnauth} />
+          : <BidderView setError={setError} onUnauth={onUnauth} />}
       </main>
     </>
   )

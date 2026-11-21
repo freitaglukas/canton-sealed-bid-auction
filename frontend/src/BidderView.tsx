@@ -1,9 +1,11 @@
 import { useState } from 'react'
-import { api, errorText } from './api'
-import { usePoll } from './usePoll'
+import { api } from './api'
+import { usePoll, usePollReporter, reportAction } from './usePoll'
 import type { InvitationView, OutcomeView, OwnBidView } from '../../backend/src/contract'
 
-export function BidderView({ setError }: { setError: (e: string | null) => void }) {
+export function BidderView(ctx: { setError: (e: string | null) => void; onUnauth: () => void }) {
+  const { setError } = ctx
+  const report = usePollReporter(ctx)
   const [invs, setInvs] = useState<InvitationView[]>([])
   const [bids, setBids] = useState<OwnBidView[]>([])
   const [outs, setOuts] = useState<OutcomeView[]>([])
@@ -11,15 +13,16 @@ export function BidderView({ setError }: { setError: (e: string | null) => void 
 
   const refresh = usePoll(async () => {
     const [i, b, o] = await Promise.all([api.invitations(), api.bids(), api.outcomes()])
-    if (i.ok) setInvs(i.data); else setError(errorText(i))
+    if (i.ok) setInvs(i.data)
     if (b.ok) setBids(b.data)
     if (o.ok) setOuts(o.data)
+    report([i, b, o])
   })
 
   const place = async (invitationId: string) => {
     setError(null)
     const r = await api.bid(invitationId, (amounts[invitationId] ?? '').trim())
-    if (!r.ok) setError(errorText(r))
+    reportAction(r, ctx)
     refresh()
   }
 
@@ -42,7 +45,7 @@ export function BidderView({ setError }: { setError: (e: string | null) => void 
               <span className={`badge ${closed ? 'closed' : 'open'}`}>{closed ? 'closed' : 'open'}</span>
             </div>
             {bid && <p data-testid={`my-bid-${auctionId}`}>Your bid: <strong>{bid.amount}</strong></p>}
-            {inv && !closed && (
+            {inv && !closed && !bid && (
               <div data-testid={`invitation-${auctionId}`} className="bid-form">
                 <input data-testid={`bid-input-${auctionId}`} inputMode="decimal" placeholder="Amount"
                   value={amounts[inv.invitationId] ?? ''}
