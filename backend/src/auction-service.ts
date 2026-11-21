@@ -26,7 +26,7 @@ import type {
   OutcomeView,
   OwnBidView,
 } from './contract'
-import { HttpError, isCloseRetryable, mapLedgerError, type MapContext } from './http-errors'
+import { HttpError, isCloseRetryable, isContractNotFound, mapLedgerError, type MapContext } from './http-errors'
 import { normalizeDecimal, validateAmount, validateCreateAuction } from './validate'
 
 export const MAX_CLOSE_ATTEMPTS = 3
@@ -49,6 +49,8 @@ export function createAuctionService(deps: ServiceDeps) {
     if (!p) throw new HttpError(502, 'LEDGER_ERROR', `No party provisioned for ${userId}`)
     return p
   }
+  /** invitationId -> auctionId, learned from invitations this process has shown the caller. */
+  const invitationAuction = new Map<string, string>()
   const ofTemplate = <P>(cs: Contract<unknown>[], name: keyof typeof T) =>
     cs.filter((c) => isTemplate(c.templateId, name)) as Contract<P>[]
 
@@ -160,7 +162,9 @@ export function createAuctionService(deps: ServiceDeps) {
   async function listInvitations(userId: string): Promise<InvitationView[]> {
     const me = partyOf(userId)
     const acs = await deps.ledgerFor(userId).activeContracts<InvitationPayload>(me, [T.AuctionInvitation])
-    return ofTemplate<InvitationPayload>(acs, 'AuctionInvitation').map((i) => ({
+    const invs = ofTemplate<InvitationPayload>(acs, 'AuctionInvitation')
+    for (const i of invs) invitationAuction.set(i.contractId, i.payload.auctionId)
+    return invs.map((i) => ({
       invitationId: i.contractId,
       auctionId: i.payload.auctionId,
       item: i.payload.item,
@@ -171,6 +175,9 @@ export function createAuctionService(deps: ServiceDeps) {
     const amount = validateAmount((body as { amount?: unknown } | undefined)?.amount)
     const ledger = deps.ledgerFor(userId)
     const me = partyOf(userId)
+    for (const i of await ledger.activeContracts<InvitationPayload>(me, [T.AuctionInvitation])) {
+      invitationAuction.set(i.contractId, i.payload.auctionId)
+    }
     const arg: PlaceBidArg = { amount }
     try {
       const { result, events } = await ledger.exercise<string>(T.AuctionInvitation, invitationId, 'PlaceBid', arg, [me])
@@ -179,13 +186,11 @@ export function createAuctionService(deps: ServiceDeps) {
     } catch (e) {
       if (!(e instanceof LedgerError)) throw e
       let alreadyBid = false
-      if (e.code === 'CONTRACT_NOT_FOUND' || /NOT_FOUND/.test(e.code)) {
-        // invitation is gone: did the caller already bid on (or conclude) that auction?
-        const acs = await ledger.activeContracts<unknown>(me, [T.AuctionInvitation, T.Bid, T.AuctionOutcome])
+      if (isContractNotFound(e)) {
+        const acs = await ledger.activeContracts<unknown>(me, [T.Bid, T.AuctionOutcome])
         const bids = ofTemplate<BidPayload>(acs, 'Bid')
         const auctionId =
-          ofTemplate<InvitationPayload>(acs, 'AuctionInvitation').find((i) => i.contractId === invitationId)?.payload.auctionId ??
-          bids.find((b) => b.payload.invitationCid === invitationId)?.payload.auctionId
+          invitationAuction.get(invitationId) ?? bids.find((b) => b.payload.invitationCid === invitationId)?.payload.auctionId
         alreadyBid =
           auctionId !== undefined &&
           (bids.some((b) => b.payload.auctionId === auctionId) ||

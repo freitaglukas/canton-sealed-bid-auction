@@ -9,6 +9,7 @@ describe('error mapping', () => {
     ['bid CNF, already bid', lerr('CONTRACT_NOT_FOUND'), { op: 'bid', alreadyBid: true }, 409, 'ALREADY_BID'],
     ['bid CNF, otherwise', lerr('CONTRACT_NOT_FOUND'), { op: 'bid' }, 409, 'AUCTION_CLOSED_OR_NOT_INVITED'],
     ['close CNF', lerr('CONTRACT_NOT_FOUND'), { op: 'close' }, 409, 'AUCTION_CLOSED'],
+    ['close CNF exhausted', lerr('CONTRACT_NOT_FOUND'), { op: 'close', closeExhausted: true }, 409, 'CLOSE_CONFLICT'],
     ['close retryable exhausted', lerr('LOCAL_VERDICT_LOCKED_CONTRACTS', { retryable: true }), { op: 'close', closeExhausted: true }, 409, 'CLOSE_CONFLICT'],
     ['close lineage exhausted', lerr('UNHANDLED_EXCEPTION', { errorId: 'SA_INCOMPLETE_CLOSE' }), { op: 'close', closeExhausted: true }, 409, 'CLOSE_CONFLICT'],
     ['errorId', lerr('UNHANDLED_EXCEPTION', { errorId: 'SA_NON_POSITIVE_BID' }), { op: 'bid' }, 409, 'SA_NON_POSITIVE_BID'],

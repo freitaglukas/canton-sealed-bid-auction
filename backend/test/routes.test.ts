@@ -121,13 +121,11 @@ describe('full flow', () => {
     expect(bids).toEqual([{ auctionId, item: 'Vase', amount: '100', status: 'closed' }])
   })
 
-  it('open bids are listed as open; no-bid close gives nulls', async () => {
+  it('open bids are listed as open with normalized amounts', async () => {
     const { auctionId } = (await createAuction()).json()
     await bid('alice', '10.50')
     const bids = (await app.inject({ method: 'GET', url: '/api/bids', cookies: await as('alice') })).json()
     expect(bids).toEqual([{ auctionId, item: 'Vase', amount: '10.5', status: 'open' }])
-    const { auctionId: a2 } = (await createAuction('Lamp')).json()
-    void a2
   })
 
   it('close with no bids returns nulls', async () => {
@@ -200,6 +198,40 @@ describe('error mapping over HTTP', () => {
     expect(res.statusCode).toBe(409)
     expect(res.json()).toMatchObject({ code: 'CLOSE_CONFLICT', ledgerCode: 'UNHANDLED_EXCEPTION' })
     expect(fake.closeArgs.length).toBe(0) // failures were injected before the fake ran
+    expect(fake.calls.filter((c) => c.choice === 'Auction_Close')).toHaveLength(3)
+  })
+})
+
+describe('bid conflicts after close', () => {
+  it('bid -> close -> re-bid is ALREADY_BID', async () => {
+    const { auctionId } = (await createAuction()).json()
+    const cookies = await as('alice')
+    const inv = (await app.inject({ method: 'GET', url: '/api/invitations', cookies })).json()
+    const url = `/api/invitations/${inv[0].invitationId}/bid`
+    expect((await app.inject({ method: 'POST', url, cookies, payload: { amount: '5' } })).statusCode).toBe(200)
+    await app.inject({ method: 'POST', url: `/api/auctions/${auctionId}/close`, cookies: await as('auctioneer') })
+    const again = await app.inject({ method: 'POST', url, cookies, payload: { amount: '6' } })
+    expect(again.statusCode).toBe(409)
+    expect(again.json().code).toBe('ALREADY_BID')
+  })
+  it('no bid -> close -> bid is AUCTION_CLOSED_OR_NOT_INVITED', async () => {
+    const { auctionId } = (await createAuction()).json()
+    const cookies = await as('carol')
+    const inv = (await app.inject({ method: 'GET', url: '/api/invitations', cookies })).json()
+    await app.inject({ method: 'POST', url: `/api/auctions/${auctionId}/close`, cookies: await as('auctioneer') })
+    const res = await app.inject({ method: 'POST', url: `/api/invitations/${inv[0].invitationId}/bid`, cookies, payload: { amount: '6' } })
+    expect(res.statusCode).toBe(409)
+    expect(res.json().code).toBe('AUCTION_CLOSED_OR_NOT_INVITED')
+  })
+})
+
+describe('close conflict', () => {
+  it('CONTRACT_NOT_FOUND persisting 3 attempts while Auction stays active is CLOSE_CONFLICT', async () => {
+    const { auctionId } = (await createAuction()).json()
+    fake.failNext.Auction_Close = [1, 2, 3].map(() => lerr('CONTRACT_NOT_FOUND'))
+    const res = await app.inject({ method: 'POST', url: `/api/auctions/${auctionId}/close`, cookies: await as('auctioneer') })
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toMatchObject({ code: 'CLOSE_CONFLICT', ledgerCode: 'CONTRACT_NOT_FOUND' })
     expect(fake.calls.filter((c) => c.choice === 'Auction_Close')).toHaveLength(3)
   })
 })

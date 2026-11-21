@@ -52,11 +52,11 @@ const RULES: Rule[] = [
     when: (e, c) => c.op === 'bid' && isContractNotFound(e),
     then: () => ({ status: 409, code: 'AUCTION_CLOSED_OR_NOT_INVITED', error: 'Auction is closed or you are not invited' }),
   },
-  { when: (e, c) => c.op === 'close' && isContractNotFound(e), then: closed },
   {
     when: (e, c) => c.op === 'close' && !!c.closeExhausted && isCloseRetryable(e),
     then: () => ({ status: 409, code: 'CLOSE_CONFLICT', error: 'Close kept conflicting with concurrent activity; try again' }),
   },
+  { when: (e, c) => c.op === 'close' && isContractNotFound(e) && !c.closeExhausted, then: closed },
   { when: (e) => !!e.errorId, then: (e) => ({ status: 409, code: e.errorId as ErrorCode, error: e.message }) },
 ]
 

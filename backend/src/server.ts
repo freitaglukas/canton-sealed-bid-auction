@@ -22,7 +22,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await app.register(cookie, { secret: newSecret() })
   const svc = createAuctionService(deps)
 
-  app.setErrorHandler((err: unknown, _req, reply) => {
+  app.setErrorHandler((err: unknown, req, reply) => {
     let status: number
     let body: ApiError
     if (err instanceof HttpError) {
@@ -33,12 +33,14 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       body = { error: err.message, code: 'VALIDATION' }
     } else if (err instanceof LedgerError) {
       const m = mapLedgerError(err)
+      if (m.status >= 500) req.log.error(err)
       status = m.status
       body = { error: m.error, code: m.code, ledgerCode: err.code }
     } else if ((err as { statusCode?: number }).statusCode === 400) {
       status = 400
       body = { error: (err as Error).message, code: 'VALIDATION' }
     } else {
+      req.log.error(err)
       status = 500
       body = { error: 'Internal error', code: 'LEDGER_ERROR' }
     }
