@@ -1,6 +1,7 @@
 -- | Shared Daml Script fixtures for the sealed-auction tests.
 module Tests.Fixtures where
 
+import DA.Action (unless)
 import DA.Optional (fromSomeNote, isSome)
 import DA.Text (isInfixOf, isPrefixOf)
 import Daml.Script
@@ -85,17 +86,18 @@ noticesFor p aid = do
   cs <- query @NoBidNotice p
   pure [c | (_, c) <- cs, c.auctionId == aid]
 
--- | Asserts the submission failed with the given SA_* error id. With
--- failWithStatus the structured errorId must match and the message must start
--- with "<id>: "; any other error shape must at least mention the id.
+-- | Asserts the submission failed via failWithStatus with the given SA_* error
+-- id: the structured errorId must match and the message must start with "<id>: ".
+-- Any other outcome or error shape aborts.
 expectSA : Text -> Either SubmitError a -> Script ()
 expectSA errId r = case r of
   Right _ -> abort ("expected " <> errId <> " but the submission succeeded")
   Left (FailureStatusError fs) -> do
-    assertMsg ("expected errorId " <> errId <> ", got " <> fs.errorId) (fs.errorId == errId)
-    assertMsg ("expected message prefix " <> errId <> ": , got " <> fs.message)
-      ((errId <> ": ") `isPrefixOf` fs.message)
-  Left e -> assertMsg ("expected " <> errId <> ", got " <> show e) (errId `isInfixOf` show e)
+    unless (fs.errorId == errId) $
+      abort ("expected errorId " <> errId <> ", got " <> fs.errorId)
+    unless ((errId <> ": ") `isPrefixOf` fs.message) $
+      abort ("expected message prefix " <> errId <> ": , got " <> fs.message)
+  Left e -> abort ("expected FailureStatusError " <> errId <> ", got " <> show e)
 
 -- | Asserts the submission failed on a template `ensure` (these carry no SA id).
 expectPreconditionFailure : Text -> Either SubmitError a -> Script ()

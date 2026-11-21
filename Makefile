@@ -2,7 +2,7 @@
 SHELL := /bin/bash
 export PATH := $(HOME)/.dpm/bin:$(PATH)
 TOPOLOGY ?= config/topology.json
-DAR ?= daml/sealed-auction/.daml/dist/sealed-auction-0.1.0.dar
+DAR ?= daml/sealed-auction/.daml/dist/sealed-auction-0.1.1.dar
 export TOPOLOGY
 
 .PHONY: tools localnet-up localnet-down localnet-clean localnet-reset localnet-status localnet-ps \

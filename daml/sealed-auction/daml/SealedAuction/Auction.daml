@@ -7,7 +7,7 @@ module SealedAuction.Auction where
 import DA.Action (unless, when)
 import DA.Fail
 import DA.Foldable (forA_)
-import DA.List (dedup, maximumBy, sort, sortBy)
+import DA.List (dedup, maximumOn, sort, sortOn)
 import qualified DA.TextMap as TextMap
 
 -- | Every auction invites exactly this many distinct bidders.
@@ -27,10 +27,6 @@ failSA errId msg = failWithStatus FailureStatus with
   category = InvalidGivenCurrentSystemStateOther
   message = errId <> ": " <> msg
   meta = TextMap.empty
-
--- | 'comparing' is not in the 3.6.3 stdlib (no DA.Ord), so it is defined here.
-comparing : Ord b => (a -> b) -> a -> a -> Ordering
-comparing f x y = compare (f x) (f y)
 
 -- | Lets the auctioneer create an 'Auction' together with its invitations in
 -- one transaction, so the auction can record its invitation lineage.
@@ -67,6 +63,8 @@ template Auction
         && length invitees == inviteeCount
         && length (dedup invitees) == inviteeCount
         && auctioneer `notElem` invitees
+        && length invitations == inviteeCount
+        && length (dedup invitations) == inviteeCount
 
     -- | Every recorded invitation must be accounted for exactly once: either
     -- still open (passed in openInvitations) or consumed by a passed bid
@@ -77,15 +75,18 @@ template Auction
         openInvitations : [ContractId AuctionInvitation]
       controller auctioneer
       do
+        -- The auctioneer-mismatch branches below are unreachable today (a fetch by
+        -- a non-stakeholder fails authorization first); kept as defense in depth.
         bidData <- forA bids \cid -> do
           b <- fetch cid
           unless (b.auctioneer == auctioneer) $
             failSA "SA_UNKNOWN_INVITATION" "bid belongs to a different auctioneer"
           pure (cid, b)
-        forA_ openInvitations \cid -> do
+        invData <- forA openInvitations \cid -> do
           inv <- fetch cid
           unless (inv.auctioneer == auctioneer) $
             failSA "SA_UNKNOWN_INVITATION" "invitation belongs to a different auctioneer"
+          pure inv
 
         let entries = map (\(_, b) -> b.invitationCid) bidData ++ openInvitations
         when (length (dedup entries) /= length entries) $
@@ -95,12 +96,23 @@ template Auction
         unless (sort entries == sort invitations) $
           failSA "SA_INCOMPLETE_CLOSE" "not every invitation of this auction is accounted for"
 
+        -- Hardening against a hand-made root (the auctioneer alone signs
+        -- 'Auction', so lineage is only as good as 'invitations'): the inputs
+        -- must also cover exactly the recorded invitees, for this auction and item.
+        let inputs =
+              [(b.bidder, b.auctionId, b.item) | (_, b) <- bidData]
+                ++ [(i.bidder, i.auctionId, i.item) | i <- invData]
+        unless (sort [p | (p, _, _) <- inputs] == sort invitees) $
+          failSA "SA_UNKNOWN_INVITATION" "inputs do not cover exactly this auction's invitees"
+        unless (all (\(_, aid, itm) -> aid == auctionId && itm == item) inputs) $
+          failSA "SA_UNKNOWN_INVITATION" "input belongs to a different auction or item"
+
         -- Highest amount; tie -> earliest submittedAt; still tied -> lowest party text.
         let rank (_, b) = (b.amount, Down b.submittedAt, Down (partyToText b.bidder))
-            ranked = sortBy (flip (comparing rank)) bidData
+            ranked = sortOn (Down . rank) bidData
             winning = case bidData of
               [] -> None
-              _ -> Some (maximumBy (comparing rank) bidData)
+              _ -> Some (maximumOn rank bidData)
             winnerCid = fmap fst winning
 
         forA_ bidData \(cid, _) ->
