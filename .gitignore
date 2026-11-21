@@ -1,0 +1,12 @@
+node_modules/
+.daml/
+.localnet/
+.superpowers/
+config/parties.json
+config/credentials.json
+**/generated/
+test-results/
+playwright-report/
+dist/
+*.log
+.DS_Store
