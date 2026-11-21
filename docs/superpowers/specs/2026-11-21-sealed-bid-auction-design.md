@@ -122,7 +122,14 @@ Why this shape:
   auctioneer, Q6): the auctioneer can call `Bid_Conclude`/`Invitation_Expire` outside `Auction_Close`, so
   uniqueness and maximality of the award are trusted to the auctioneer. Preventing that would require the
   bidder's participant to validate the maximum, which means seeing the other bids. The honest path is fail-safe: tampering
-  outside close makes the close fail. The ledger guarantees privacy, one
+  outside close makes the close fail.
+  Also part of this trust boundary: `Auction` is signed by the auctioneer alone, so the
+  auctioneer could archive it and create a replacement with a forged invitation list, and the
+  lineage check would then pass. The ledger cannot prevent this. It is hardened two ways: an
+  `ensure` on exactly 3 distinct invitations, and a close-time check that the bidder set,
+  `auctionId` and `item` all match. Any such tampering leaves on-ledger evidence: the cheated
+  bidder still holds a live `Bid`. Test: `test_rootReplacementIsTrustBoundary`. `Bid` also has
+  `ensure amount > 0` as a backstop for direct co-signed creates. The ledger guarantees privacy, one
   bid per bidder, and that a co-signed `Won` equals the winner's own bid.
 - **"Bid after close" is impossible**: close consumes every bid and every open invitation, and `PlaceBid`
   needs an active invitation. "One bid only": `PlaceBid` consumes the invitation.
