@@ -1,0 +1,223 @@
+-- | Close-time lineage rules, bid validation, template invariants and tie-breaking.
+module Tests.CloseRules where
+
+import DA.Assert ((===))
+import DA.Date (date, Month(..))
+import DA.Foldable (forA_)
+import DA.Time (time, seconds, addRelTime)
+import Daml.Script
+
+import SealedAuction.Auction
+import Tests.Fixtures
+
+t0 : Time
+t0 = time (date 2026 Nov 21) 12 0 0
+
+-- ---------------------------------------------------------------------------
+-- Lineage: every recorded invitation accounted for exactly once.
+
+test_closeMissingBidRejected : Script ()
+test_closeMissingBidRejected = script do
+  w <- setupWorld
+  (auction, invs) <- openAuction w "A" "Painting"
+  ba <- placeBid w.alice (invOf w.alice invs) 100.0
+  bb <- placeBid w.bob (invOf w.bob invs) 150.0
+  bc <- placeBid w.carol (invOf w.carol invs) 120.0
+  -- Drop bob's (highest) bid.
+  expectSA "SA_INCOMPLETE_CLOSE" =<< tryClose w auction [ba, bc] []
+  -- Nothing was consumed.
+  bbActive <- isActive w.auctioneer bb
+  bbActive === True
+  aActive <- isActive w.auctioneer auction
+  aActive === True
+
+test_closeMissingOpenInvitationRejected : Script ()
+test_closeMissingOpenInvitationRejected = script do
+  w <- setupWorld
+  (auction, invs) <- openAuction w "A" "Painting"
+  ba <- placeBid w.alice (invOf w.alice invs) 100.0
+  -- carol's open invitation is omitted.
+  expectSA "SA_INCOMPLETE_CLOSE" =<< tryClose w auction [ba] [invOf w.bob invs]
+  -- No open invitations at all.
+  expectSA "SA_INCOMPLETE_CLOSE" =<< tryClose w auction [ba] []
+
+test_closeWithBidFromOtherAuctionRejected : Script ()
+test_closeWithBidFromOtherAuctionRejected = script do
+  w <- setupWorld
+  (auctionA, invsA) <- openAuction w "A" "Painting"
+  (_, invsB) <- openAuction w "B" "Vase"
+  aA <- placeBid w.alice (invOf w.alice invsA) 100.0
+  bA <- placeBid w.bob (invOf w.bob invsA) 150.0
+  cB <- placeBid w.carol (invOf w.carol invsB) 120.0
+  -- A bid from auction B passed in place of carol's A invitation.
+  expectSA "SA_UNKNOWN_INVITATION" =<< tryClose w auctionA [aA, bA, cB] []
+  -- An open invitation from auction B passed in place of carol's A invitation.
+  expectSA "SA_UNKNOWN_INVITATION" =<< tryClose w auctionA [aA, bA] [invOf w.bob invsB]
+  cBActive <- isActive w.auctioneer cB
+  cBActive === True
+
+test_closeWithSubstitutedInvitationRejected : Script ()
+test_closeWithSubstitutedInvitationRejected = script do
+  w <- setupWorld
+  (auction, invs) <- openAuction w "A" "Painting"
+  ba <- placeBid w.alice (invOf w.alice invs) 100.0
+  bb <- placeBid w.bob (invOf w.bob invs) 150.0
+  -- The auctioneer forges a fresh invitation for bob with A's auctionId and
+  -- tries to pass it off as "bob never bid".
+  forged <- submit w.auctioneer $ createCmd AuctionInvitation with
+    auctioneer = w.auctioneer
+    bidder = w.bob
+    auctionId = "A"
+    item = "Painting"
+  expectSA "SA_UNKNOWN_INVITATION" =<< tryClose w auction [ba] [forged, invOf w.carol invs]
+  bbActive <- isActive w.auctioneer bb
+  bbActive === True
+  bobSees <- isActive w.bob bb
+  bobSees === True
+
+test_closeDuplicateEntryRejected : Script ()
+test_closeDuplicateEntryRejected = script do
+  w <- setupWorld
+  (auction, invs) <- openAuction w "A" "Painting"
+  ba <- placeBid w.alice (invOf w.alice invs) 100.0
+  bb <- placeBid w.bob (invOf w.bob invs) 150.0
+  -- The same bid twice.
+  expectSA "SA_DUPLICATE_ENTRY" =<< tryClose w auction [ba, bb, ba] [invOf w.carol invs]
+  -- The same open invitation twice.
+  expectSA "SA_DUPLICATE_ENTRY" =<< tryClose w auction [ba, bb] [invOf w.carol invs, invOf w.carol invs]
+
+-- ---------------------------------------------------------------------------
+-- Bid validation and template invariants.
+
+test_nonPositiveBidRejected : Script ()
+test_nonPositiveBidRejected = script do
+  w <- setupWorld
+  (_, invs) <- openAuction w "A" "Painting"
+  expectSA "SA_NON_POSITIVE_BID" =<< trySubmit w.alice (exerciseCmd (invOf w.alice invs) PlaceBid with amount = 0.0)
+  expectSA "SA_NON_POSITIVE_BID" =<< trySubmit w.bob (exerciseCmd (invOf w.bob invs) PlaceBid with amount = -1.0)
+  -- The invitations were not consumed, so a valid bid still goes through.
+  stillOpen <- isActive w.alice (invOf w.alice invs)
+  stillOpen === True
+  _ <- placeBid w.alice (invOf w.alice invs) 0.0000000001
+  pure ()
+
+test_ensureInvariants : Script ()
+test_ensureInvariants = script do
+  w <- setupWorld
+  let tryCreate aid itm ps = trySubmit w.auctioneer $
+        exerciseCmd w.role CreateAuction with auctionId = aid; item = itm; invitees = ps
+  expectPreconditionFailure "empty item" =<< tryCreate "E1" "" [w.alice, w.bob, w.carol]
+  expectPreconditionFailure "2 invitees" =<< tryCreate "E2" "Painting" [w.alice, w.bob]
+  expectPreconditionFailure "4 invitees" =<< tryCreate "E3" "Painting" [w.alice, w.bob, w.carol, w.dave]
+  expectPreconditionFailure "duplicate invitee" =<< tryCreate "E4" "Painting" [w.alice, w.alice, w.bob]
+  expectPreconditionFailure "auctioneer as invitee" =<< tryCreate "E5" "Painting" [w.auctioneer, w.alice, w.bob]
+  -- The same checks hold for a direct create.
+  expectPreconditionFailure "direct create, 2 invitees" =<< trySubmit w.auctioneer (createCmd Auction with
+    auctioneer = w.auctioneer; auctionId = "E6"; item = "Painting"; invitees = [w.alice, w.bob]; invitations = [])
+  -- None of the failed attempts left an invitation behind.
+  leftovers <- query @AuctionInvitation w.auctioneer
+  length leftovers === 0
+  -- Positive control: a valid auction is accepted.
+  r <- tryCreate "OK" "Painting" [w.alice, w.bob, w.dave]
+  case r of
+    Left e -> abort ("valid auction rejected: " <> show e)
+    Right _ -> pure ()
+
+-- ---------------------------------------------------------------------------
+-- Winner selection: max amount, then earliest submittedAt, then lowest party text.
+
+test_tieEarliestBidWins : Script ()
+test_tieEarliestBidWins = script do
+  w <- setupWorld
+  setTime t0
+  (auction, invs) <- openAuction w "A" "Painting"
+  ba <- placeBid w.alice (invOf w.alice invs) 100.0
+  passTime (seconds 1)
+  bb <- placeBid w.bob (invOf w.bob invs) 100.0
+  baBid <- fetchActive w.auctioneer ba
+  baBid.submittedAt === t0
+  bbBid <- fetchActive w.auctioneer bb
+  bbBid.submittedAt === addRelTime t0 (seconds 1)
+  res <- closeAuction w auction [bb, ba] [invOf w.carol invs]
+  res.winner === Some w.alice
+  res.price === Some 100.0
+
+  -- Converse, so time (not party order) is what decides: bob bids first on B.
+  (auctionB, invsB) <- openAuction w "B" "Vase"
+  bbB <- placeBid w.bob (invOf w.bob invsB) 100.0
+  passTime (seconds 1)
+  baB <- placeBid w.alice (invOf w.alice invsB) 100.0
+  resB <- closeAuction w auctionB [baB, bbB] [invOf w.carol invsB]
+  resB.winner === Some w.bob
+  resB.price === Some 100.0
+
+test_tieSameTimeLowestPartyWins : Script ()
+test_tieSameTimeLowestPartyWins = script do
+  w <- setupWorld
+  setTime t0
+  (auction, invs) <- openAuction w "A" "Painting"
+  bb <- placeBid w.bob (invOf w.bob invs) 100.0
+  ba <- placeBid w.alice (invOf w.alice invs) 100.0
+  baBid <- fetchActive w.auctioneer ba
+  bbBid <- fetchActive w.auctioneer bb
+  baBid.submittedAt === bbBid.submittedAt
+  let expected = if partyToText w.alice < partyToText w.bob then w.alice else w.bob
+  res <- closeAuction w auction [bb, ba] [invOf w.carol invs]
+  res.winner === Some expected
+  res.price === Some 100.0
+
+test_resultIndependentOfInputOrder : Script ()
+test_resultIndependentOfInputOrder = script do
+  setTime t0
+  w1 <- setupWorldWith ""
+  w2 <- setupWorldWith "_r"
+  let run w order = do
+        (auction, invs) <- openAuction w "A" "Painting"
+        ba <- placeBid w.alice (invOf w.alice invs) 100.0
+        bb <- placeBid w.bob (invOf w.bob invs) 120.0
+        bc <- placeBid w.carol (invOf w.carol invs) 120.0
+        closeAuction w auction (order [ba, bb, bc]) []
+      roleOf w p
+        | p == w.alice = "alice"
+        | p == w.bob = "bob"
+        | p == w.carol = "carol"
+        | otherwise = "other"
+  r1 <- run w1 identity
+  r2 <- run w2 reverse
+  fmap (roleOf w1) r1.winner === Some "bob"
+  fmap (roleOf w1) r1.winner === fmap (roleOf w2) r2.winner
+  r1.price === r2.price
+  [(roleOf w1 p, a) | (p, a) <- r1.bids] === [(roleOf w2 p, a) | (p, a) <- r2.bids]
+
+-- ---------------------------------------------------------------------------
+-- Edge cases.
+
+test_noBids : Script ()
+test_noBids = script do
+  w <- setupWorld
+  (auction, invs) <- openAuction w "A" "Painting"
+  res <- closeAuction w auction [] (map snd invs)
+  res.winner === None
+  res.price === None
+  res.bids === []
+  notices <- noticesFor w.auctioneer "A"
+  length notices === 3
+  forA_ [w.alice, w.bob, w.carol] \p -> do
+    n <- single "notice" =<< noticesFor p "A"
+    n.bidder === p
+  outcomes <- query @AuctionOutcome w.auctioneer
+  length outcomes === 0
+
+-- | Trust boundary (spec Q6): the auctioneer can conclude a bid outside close,
+-- but then the honest close path fails safe instead of awarding silently.
+test_failSafeAfterOutOfBandConclude : Script ()
+test_failSafeAfterOutOfBandConclude = script do
+  w <- setupWorld
+  (auction, invs) <- openAuction w "A" "Painting"
+  ba <- placeBid w.alice (invOf w.alice invs) 100.0
+  bb <- placeBid w.bob (invOf w.bob invs) 150.0
+  bc <- placeBid w.carol (invOf w.carol invs) 120.0
+  _ <- submit w.auctioneer $ exerciseCmd ba Bid_Conclude with won = True
+  expectSA "SA_INCOMPLETE_CLOSE" =<< tryClose w auction [bb, bc] []
+  aActive <- isActive w.auctioneer auction
+  aActive === True

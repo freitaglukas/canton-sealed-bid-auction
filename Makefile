@@ -24,8 +24,9 @@ localnet-ps:     ; scripts/localnet.sh ps
 build:
 	cd daml && dpm build --all
 
+# --all is needed for coverage of the main package (a data-dependency); Archive choices are ignored.
 test-daml: build
-	cd daml/sealed-auction-tests && dpm test
+	cd daml/sealed-auction-tests && dpm test --all --show-coverage --coverage-ignore-choice 'Archive$$'
 
 # --- TypeScript ---
 typecheck:

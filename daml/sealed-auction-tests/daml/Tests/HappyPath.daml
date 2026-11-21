@@ -1,0 +1,78 @@
+-- | End-to-end happy paths: a full auction, and two auctions running side by side.
+module Tests.HappyPath where
+
+import DA.Assert ((===))
+import DA.List (sortOn)
+import Daml.Script
+
+import SealedAuction.Auction
+import Tests.Fixtures
+
+test_fullAuction : Script ()
+test_fullAuction = script do
+  w <- setupWorld
+  (auction, invs) <- openAuction w "A" "Painting"
+  ba <- placeBid w.alice (invOf w.alice invs) 100.0
+  bb <- placeBid w.bob (invOf w.bob invs) 150.0
+  bc <- placeBid w.carol (invOf w.carol invs) 120.0
+
+  res <- closeAuction w auction [ba, bb, bc] []
+  res.auctionId === "A"
+  res.item === "Painting"
+  res.winner === Some w.bob
+  res.price === Some 150.0
+  length res.bids === 3
+  sortOn fst res.bids === sortOn fst [(w.alice, 100.0), (w.bob, 150.0), (w.carol, 120.0)]
+
+  ob <- single "bob outcome" =<< outcomesFor w.bob "A"
+  ob.bidder === w.bob
+  ob.result === Won with amountOwed = 150.0
+  ob.bidAmount === 150.0
+  oa <- single "alice outcome" =<< outcomesFor w.alice "A"
+  oa.bidder === w.alice
+  oa.result === Lost
+  oa.bidAmount === 100.0
+  oc <- single "carol outcome" =<< outcomesFor w.carol "A"
+  oc.bidder === w.carol
+  oc.result === Lost
+  oc.bidAmount === 120.0
+
+  -- Close consumed everything: no bid, invitation or auction remains active.
+  remainingBids <- query @Bid w.auctioneer
+  length remainingBids === 0
+  remainingInvs <- query @AuctionInvitation w.auctioneer
+  length remainingInvs === 0
+  auctionActive <- isActive w.auctioneer auction
+  auctionActive === False
+
+test_concurrentAuctions : Script ()
+test_concurrentAuctions = script do
+  w <- setupWorld
+  (auctionA, invsA) <- openAuction w "A" "Painting"
+  (auctionB, invsB) <- openAuction w "B" "Vase"
+  aliceB <- placeBid w.alice (invOf w.alice invsB) 50.0
+  aliceA <- placeBid w.alice (invOf w.alice invsA) 100.0
+
+  resB <- closeAuction w auctionB [aliceB] [invOf w.bob invsB, invOf w.carol invsB]
+  resB.auctionId === "B"
+  resB.winner === Some w.alice
+  resB.price === Some 50.0
+  resB.bids === [(w.alice, 50.0)]
+
+  oa <- single "alice B outcome" =<< outcomesFor w.alice "B"
+  oa.result === Won with amountOwed = 50.0
+  nb <- single "bob B notice" =<< noticesFor w.bob "B"
+  nb.bidder === w.bob
+  nb.item === "Vase"
+  nc <- single "carol B notice" =<< noticesFor w.carol "B"
+  nc.bidder === w.carol
+
+  -- Auction A is untouched.
+  aActive <- isActive w.auctioneer auctionA
+  aActive === True
+  aliceAActive <- isActive w.auctioneer aliceA
+  aliceAActive === True
+  noA <- outcomesFor w.alice "A"
+  length noA === 0
+  bobAInvActive <- isActive w.bob (invOf w.bob invsA)
+  bobAInvActive === True
